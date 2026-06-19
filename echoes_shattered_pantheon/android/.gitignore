@@ -1,0 +1,14 @@
+/.gradle
+/captures/
+/local.properties
+GeneratedPluginRegistrant.java
+
+# keep these IN git so CI can build:
+# - gradle-wrapper.jar
+# - gradlew
+# - gradlew.bat
+
+# Never commit keystores
+key.properties
+**/*.keystore
+**/*.jks
