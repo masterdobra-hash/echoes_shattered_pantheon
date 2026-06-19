@@ -1,9 +1,0 @@
-{
-  "enemies": [
-    {"id":"broken_hoplite","name":"Broken Hoplite","role":"melee","maxHp":120,"moveSpeed":120.0,"damage":12},
-    {"id":"temple_archer","name":"Temple Archer","role":"ranged","maxHp":80,"moveSpeed":135.0,"damage":15},
-    {"id":"marble_guardian","name":"Marble Guardian","role":"tank","maxHp":240,"moveSpeed":75.0,"damage":22},
-    {"id":"titan_spawn","name":"Titan Spawn","role":"elite","maxHp":300,"moveSpeed":110.0,"damage":18},
-    {"id":"the_fallen_hoplite","name":"The Fallen Hoplite","role":"boss","maxHp":1400,"moveSpeed":95.0,"damage":35}
-  ]
-}

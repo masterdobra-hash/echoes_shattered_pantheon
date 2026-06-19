@@ -1,7 +1,0 @@
-{
-  "shards": [
-    {"id":"shard_of_the_titan","name":"Shard of the Titan","slot":"Major","description":"Titan's Slam creates a secondary shockwave that deals 40% damage."},
-    {"id":"shard_of_the_forge","name":"Shard of the Forge","slot":"Minor","description":"Fire skills gain +25% burn duration and leave a burning trail."},
-    {"id":"shard_of_the_storm","name":"Shard of the Storm","slot":"Minor","description":"Critical hits have 100% chance to apply Shock for 2 sec."}
-  ]
-}
