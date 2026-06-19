@@ -23,80 +23,102 @@ class _GameShellState extends State<GameShell> {
         children: [
           Positioned.fill(child: GameWidget(game: game)),
 
-          // Top — boss bar + combat log
-          Positioned(
-            top: 18, left: 18, right: 18,
-            child: Column(
-              children: [
-                ValueListenableBuilder<int>(
-                  valueListenable: game.bossHp,
-                  builder: (_, hp, __) => ValueListenableBuilder<int>(
-                    valueListenable: game.bossPhase,
-                    builder: (_, ph, __) => _bossBar(hp, game.bossMaxHp.value, ph),
+          // Top — boss bar + combat log (only after world is ready)
+          ValueListenableBuilder<bool>(
+            valueListenable: game.isReady,
+            builder: (_, ready, __) {
+              if (!ready) {
+                return const Positioned(
+                  top: 32, left: 0, right: 0,
+                  child: Center(
+                    child: Text('Loading Ruined Olympus...',
+                      style: TextStyle(color: Color(0xFFE8B86D),
+                        fontSize: 14, fontWeight: FontWeight.w600,
+                        letterSpacing: 2)),
                   ),
-                ),
-                const SizedBox(height: 8),
-                ValueListenableBuilder<String>(
-                  valueListenable: game.combatLog,
-                  builder: (_, value, __) => Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xCCE8B86D),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFFB8860B), width: 1.5),
+                );
+              }
+              return Positioned(
+                top: 18, left: 18, right: 18,
+                child: Column(
+                  children: [
+                    ValueListenableBuilder<int>(
+                      valueListenable: game.bossHp,
+                      builder: (_, hp, __) => ValueListenableBuilder<int>(
+                        valueListenable: game.bossPhase,
+                        builder: (_, ph, __) => _bossBar(hp, game.bossMaxHp.value, ph),
+                      ),
                     ),
-                    child: Text(value, style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w700)),
-                  ),
+                    const SizedBox(height: 8),
+                    ValueListenableBuilder<String>(
+                      valueListenable: game.combatLog,
+                      builder: (_, value, __) => Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xCCE8B86D),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFB8860B), width: 1.5),
+                        ),
+                        child: Text(value, style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              );
+            },
           ),
 
-          // Bottom HUD — HP orb · skill bar · Mana orb (Diablo 2 layout)
-          Positioned(
-            bottom: 0, left: 0, right: 0,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                  colors: [Color(0x00000000), Color(0xDD000000)],
-                ),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  ValueListenableBuilder<int>(
-                    valueListenable: game.playerHp,
-                    builder: (_, hp, __) => _orb(hp, game.playerMaxHp.value, const Color(0xFFE83C3C), 'HP'),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Wrap(
-                      alignment: WrapAlignment.center,
-                      spacing: 6, runSpacing: 6,
-                      children: [
-                        _skillBtn('titans_slam',    'Slam',     const Color(0xFFC9C9C9)),
-                        _skillBtn('inferno_strike', 'Inferno',  const Color(0xFFFF6A1A)),
-                        _skillBtn('aegis_ward',     'Aegis',    const Color(0xFFFFD400)),
-                        _skillBtn('earthshatter',   'Shatter',  const Color(0xFFC9C9C9)),
-                        _skillBtn('frost_nova',     'Frost',    const Color(0xFF4FD3FF)),
-                        _skillBtn('void_smite',     'Void',     const Color(0xFF8B2FC9)),
-                        _skillBtn('battle_cry',     'Cry',      const Color(0xFFE8B86D)),
-                        _skillBtn('chain_lightning','Chain',    const Color(0xFFFFD400)),
-                        _skillBtn('shield_charge',  'Charge',   const Color(0xFFC9C9C9)),
-                        _skillBtn('colossus_form',  'Colossus', const Color(0xFFB048E8)),
-                      ],
+          // Bottom HUD — only after world is ready
+          ValueListenableBuilder<bool>(
+            valueListenable: game.isReady,
+            builder: (_, ready, __) {
+              if (!ready) return const SizedBox.shrink();
+              return Positioned(
+                bottom: 0, left: 0, right: 0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                      colors: [Color(0x00000000), Color(0xDD000000)],
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  ValueListenableBuilder<int>(
-                    valueListenable: game.playerMana,
-                    builder: (_, mn, __) => _orb(mn, game.playerMaxMana.value, const Color(0xFF4FA8E8), 'MP'),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      ValueListenableBuilder<int>(
+                        valueListenable: game.playerHp,
+                        builder: (_, hp, __) => _orb(hp, game.playerMaxHp.value, const Color(0xFFE83C3C), 'HP'),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 6, runSpacing: 6,
+                          children: [
+                            _skillBtn('titans_slam',    'Slam',     const Color(0xFFC9C9C9)),
+                            _skillBtn('inferno_strike', 'Inferno',  const Color(0xFFFF6A1A)),
+                            _skillBtn('aegis_ward',     'Aegis',    const Color(0xFFFFD400)),
+                            _skillBtn('earthshatter',   'Shatter',  const Color(0xFFC9C9C9)),
+                            _skillBtn('frost_nova',     'Frost',    const Color(0xFF4FD3FF)),
+                            _skillBtn('void_smite',     'Void',     const Color(0xFF8B2FC9)),
+                            _skillBtn('battle_cry',     'Cry',      const Color(0xFFE8B86D)),
+                            _skillBtn('chain_lightning','Chain',    const Color(0xFFFFD400)),
+                            _skillBtn('shield_charge',  'Charge',   const Color(0xFFC9C9C9)),
+                            _skillBtn('colossus_form',  'Colossus', const Color(0xFFB048E8)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      ValueListenableBuilder<int>(
+                        valueListenable: game.playerMana,
+                        builder: (_, mn, __) => _orb(mn, game.playerMaxMana.value, const Color(0xFF4FA8E8), 'MP'),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
+                ),
+              );
+            },
           ),
 
           // Death overlay
@@ -139,7 +161,7 @@ class _GameShellState extends State<GameShell> {
   }
 
   Widget _bossBar(int hp, int maxHp, int phase) {
-    final ratio = (hp / maxHp).clamp(0.0, 1.0);
+    final ratio = maxHp == 0 ? 0.0 : (hp / maxHp).clamp(0.0, 1.0);
     final phaseLabel = phase == 1 ? 'Phase 1' : (phase == 2 ? 'Phase 2 — Enraged' : 'Phase 3 — Shattered Fury');
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
