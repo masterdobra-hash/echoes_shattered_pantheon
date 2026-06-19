@@ -1,0 +1,7 @@
+{
+  "legendaries": [
+    {"id":"stormbreakers_wrath","name":"Stormbreaker's Wrath","slot":"weapon","mod":"Titan's Slam fires a lightning bolt at the nearest enemy"},
+    {"id":"aegis_of_fallen","name":"Aegis of the Fallen God","slot":"chest","mod":"-25% damage from bosses, +50 max HP"},
+    {"id":"ring_of_eternal_flame","name":"Ring of Eternal Flame","slot":"ring","mod":"All hits ignite enemies (Burn 3s)"}
+  ]
+}
