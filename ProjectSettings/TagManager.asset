@@ -1,0 +1,61 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!78 &1
+TagManager:
+  serializedVersion: 2
+  tags:
+  - Player
+  - Enemy
+  - Boss
+  - Loot
+  - Telegraph
+  layers:
+  - Default
+  - TransparentFX
+  - Ignore Raycast
+  -
+  - Water
+  - UI
+  -
+  -
+  - Ground
+  - Player
+  - Enemy
+  - Boss
+  - Loot
+  - Telegraph
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  m_SortingLayers:
+  - name: Default
+    uniqueID: 0
+    locked: 0
+  - name: Ground
+    uniqueID: 1100000
+    locked: 0
+  - name: Entities
+    uniqueID: 1100001
+    locked: 0
+  - name: VFX
+    uniqueID: 1100002
+    locked: 0
+  - name: UI
+    uniqueID: 1100003
+    locked: 0
