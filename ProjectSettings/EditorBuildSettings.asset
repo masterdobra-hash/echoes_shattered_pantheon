@@ -6,6 +6,6 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/Scenes/RuinedOlympus.unity
-    guid: 22222222222222222222222222222222
+    path: Assets/Scenes/Diagnostic.unity
+    guid: 33333333333333333333333333333333
   m_configObjects: {}

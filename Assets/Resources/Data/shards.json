@@ -1,7 +1,0 @@
-{
-  "shards": [
-    { "id": "shard_thunder",  "name": "Shard of Thunder", "bonus": "thunder_chain_damage", "value": 0.25, "rarity": "epic" },
-    { "id": "shard_inferno",  "name": "Shard of Inferno", "bonus": "inferno_burn_duration", "value": 2.0, "rarity": "epic" },
-    { "id": "shard_aegis",    "name": "Shard of Aegis",   "bonus": "aegis_shield_hp",      "value": 0.4, "rarity": "legendary" }
-  ]
-}
