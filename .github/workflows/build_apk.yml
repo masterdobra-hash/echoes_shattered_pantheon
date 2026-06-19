@@ -20,10 +20,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: Library
-          key: Library-Android-BiRP-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          key: Library-Android-BiRP-GLES3-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
           restore-keys: |
+            Library-Android-BiRP-GLES3-
             Library-Android-BiRP-
-            Library-Android-
 
       - name: Free disk space
         run: |

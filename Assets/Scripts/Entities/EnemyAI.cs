@@ -5,26 +5,20 @@ namespace Echoes.Entities
 {
     public class EnemyAI : MonoBehaviour
     {
-        public string  defId = "broken_hoplite";
+        public string defId = "broken_hoplite";
         public Transform target;
-        public float   hp, damage, speed, attackRange;
-        public float   attackCooldown = 1.2f;
-        private float  _atkTimer;
+        public float hp, damage, speed, attackRange;
+        public float attackCooldown = 1.2f;
+        private float _atkTimer;
 
         private void Start()
         {
             var def = ContentRegistry.Instance.FindEnemy(defId);
-            if (def != null)
-            {
+            if (def != null) {
                 hp = def.hp; damage = def.damage; speed = def.speed; attackRange = def.attackRange;
-            }
-            else { hp = 100; damage = 10; speed = 2; attackRange = 1.4f; }
-
-            if (target == null)
-            {
-                var p = GameObject.FindGameObjectWithTag("Player");
-                if (p != null) target = p.transform;
-            }
+            } else { hp = 100; damage = 10; speed = 2f; attackRange = 1.4f; }
+            var p = GameObject.FindGameObjectWithTag("Player");
+            if (p != null) target = p.transform;
         }
 
         private void Update()
@@ -51,12 +45,7 @@ namespace Echoes.Entities
         public void TakeDamage(float dmg)
         {
             hp -= dmg;
-            if (hp <= 0f)
-            {
-                Systems.LootSystem.RollDrop(transform.position, "common");
-                Systems.AudioManager.Play("sfx_enemy_death");
-                Destroy(gameObject);
-            }
+            if (hp <= 0f) Destroy(gameObject);
         }
     }
 }

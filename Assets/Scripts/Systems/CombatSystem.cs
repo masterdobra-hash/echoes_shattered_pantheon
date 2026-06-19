@@ -9,28 +9,17 @@ namespace Echoes.Systems
         public static void Cast(SkillDef skill, Transform caster)
         {
             if (skill == null || caster == null) return;
-            AudioManager.Play(SfxFor(skill.id));
-
-            float radius = skill.radius > 0f ? skill.radius : 2.5f;
+            float radius = skill.radius > 0f ? skill.radius : 3f;
             var hits = Physics.OverlapSphere(caster.position, radius);
-            foreach (var c in hits)
+            if (hits == null) return;
+            for (int i = 0; i < hits.Length; i++)
             {
+                var c = hits[i];
                 if (c == null) continue;
                 var e = c.GetComponent<EnemyAI>();
                 if (e != null) { e.TakeDamage(skill.damage); continue; }
                 var b = c.GetComponent<BossAI>();
-                if (b != null) { b.TakeDamage(skill.damage); }
-            }
-        }
-
-        private static string SfxFor(string skillId)
-        {
-            switch (skillId)
-            {
-                case "titan_slam":     return "sfx_titan_slam";
-                case "inferno_strike": return "sfx_inferno_strike";
-                case "aegis_ward":     return "sfx_aegis_ward";
-                default:               return "sfx_titan_slam";
+                if (b != null) b.TakeDamage(skill.damage);
             }
         }
     }

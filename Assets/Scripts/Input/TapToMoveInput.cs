@@ -1,45 +1,45 @@
 using UnityEngine;
-#if ENABLE_INPUT_SYSTEM
-using UnityEngine.InputSystem;
-#endif
 
 namespace Echoes.Input
 {
     /// <summary>
-    /// Tap-to-move (Diablo II): raycast from screen point onto Ground layer,
-    /// send destination to the PlayerController.
+    /// Tap/click to move. Uses legacy UnityEngine.Input (always available),
+    /// no dependency on the new Input System package.
     /// </summary>
     public class TapToMoveInput : MonoBehaviour
     {
-        public Camera     cam;
-        public LayerMask  groundMask;
         public Echoes.Entities.PlayerController player;
+        public Camera cam;
 
         private void Awake()
         {
+            if (player == null) player = GetComponent<Echoes.Entities.PlayerController>();
             if (cam == null) cam = Camera.main;
         }
 
         private void Update()
         {
-            if (player == null || cam == null) return;
-            bool tapped = false;
-            Vector2 screen = Vector2.zero;
+            if (player == null) return;
+            if (cam == null) { cam = Camera.main; if (cam == null) return; }
 
-#if ENABLE_INPUT_SYSTEM
-            if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
-            { tapped = true; screen = Mouse.current.position.ReadValue(); }
-            else if (Touchscreen.current != null && Touchscreen.current.primaryTouch.press.wasPressedThisFrame)
-            { tapped = true; screen = Touchscreen.current.primaryTouch.position.ReadValue(); }
-#else
+            bool tapped = false;
+            Vector3 screen = Vector3.zero;
             if (UnityEngine.Input.GetMouseButtonDown(0))
             { tapped = true; screen = UnityEngine.Input.mousePosition; }
-#endif
+            else if (UnityEngine.Input.touchCount > 0)
+            {
+                var t = UnityEngine.Input.GetTouch(0);
+                if (t.phase == TouchPhase.Began) { tapped = true; screen = new Vector3(t.position.x, t.position.y, 0f); }
+            }
             if (!tapped) return;
 
             var ray = cam.ScreenPointToRay(screen);
-            if (Physics.Raycast(ray, out var hit, 200f, groundMask))
+            RaycastHit hit;
+            // Hit the Plane: it has MeshCollider added by CreatePrimitive
+            if (Physics.Raycast(ray, out hit, 200f))
+            {
                 player.MoveTo(hit.point);
+            }
         }
     }
 }
