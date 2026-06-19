@@ -1,0 +1,7 @@
+{
+  "items": [
+    { "id": "helm_of_atlas",   "name": "Helm of Atlas",   "slot": "head",   "rarity": "legendary", "stats": { "maxHp": 150, "damageReduction": 0.08 } },
+    { "id": "blade_of_kronos", "name": "Blade of Kronos", "slot": "weapon", "rarity": "legendary", "stats": { "damage": 28,  "critChance": 0.12 } },
+    { "id": "girdle_of_zeus",  "name": "Girdle of Zeus",  "slot": "belt",   "rarity": "legendary", "stats": { "maxMana": 60, "thunderDamage": 0.25 } }
+  ]
+}

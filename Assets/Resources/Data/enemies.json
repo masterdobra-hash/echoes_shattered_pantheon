@@ -1,0 +1,21 @@
+{
+  "enemies": [
+    { "id": "broken_hoplite",  "name": "Broken Hoplite",   "hp": 120, "damage": 12, "speed": 2.2, "attackRange": 1.2, "xp": 18, "lootTable": "common"  },
+    { "id": "temple_archer",   "name": "Temple Archer",    "hp": 80,  "damage": 15, "speed": 1.8, "attackRange": 7.0, "xp": 22, "lootTable": "common"  },
+    { "id": "marble_guardian", "name": "Marble Guardian",  "hp": 240, "damage": 22, "speed": 1.6, "attackRange": 1.5, "xp": 45, "lootTable": "rare"    },
+    { "id": "titan_spawn",     "name": "Titan Spawn",      "hp": 300, "damage": 18, "speed": 2.0, "attackRange": 1.8, "xp": 55, "lootTable": "rare"    }
+  ],
+  "boss": {
+    "id": "fallen_hoplite",
+    "name": "The Fallen Hoplite",
+    "hp": 1400,
+    "damage": 35,
+    "speed": 2.4,
+    "phases": [
+      { "id": "phase_1", "hpThreshold": 1.00, "abilities": ["slash", "spear_thrust"],                      "telegraph": 0.7 },
+      { "id": "phase_2", "hpThreshold": 0.66, "abilities": ["shield_bash", "ground_pound", "summon_spawn"],"telegraph": 0.9 },
+      { "id": "phase_3", "hpThreshold": 0.33, "abilities": ["enrage", "whirlwind", "olympus_strike"],     "telegraph": 0.5 }
+    ],
+    "lootTable": "boss_legendary"
+  }
+}
