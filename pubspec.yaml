@@ -4,12 +4,13 @@ publish_to: 'none'
 version: 0.1.0+1
 
 environment:
-  sdk: '>=3.4.0 <4.0.0'
+  sdk: ">=3.6.0 <4.0.0"
+  flutter: ">=3.27.0"
 
 dependencies:
   flutter:
     sdk: flutter
-  flame: ^1.18.0
+  flame: ^1.23.0
   flame_audio: ^2.10.4
   cupertino_icons: ^1.0.8
 
