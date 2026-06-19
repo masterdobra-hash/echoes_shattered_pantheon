@@ -106,13 +106,14 @@ namespace Echoes
                 new Color(0.75f, 0.75f, 0.78f),
                 new Color(0.55f, 0.30f, 0.18f),
             };
+            // Enemies spawn FAR from player (radius 12) so player has time to react
             for (int i = 0; i < 4; i++)
             {
                 var go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
                 go.name = "Enemy_" + i;
                 go.tag = "Enemy";
                 float ang = (360f / 4) * i * Mathf.Deg2Rad;
-                go.transform.position = new Vector3(Mathf.Cos(ang) * 5f, 1f, Mathf.Sin(ang) * 5f);
+                go.transform.position = new Vector3(Mathf.Cos(ang) * 12f, 1f, Mathf.Sin(ang) * 12f);
                 var r = go.GetComponent<Renderer>();
                 if (r != null) r.sharedMaterial = MaterialFactory.Make(cols[i % cols.Length]);
                 go.AddComponent<Enemy>();
@@ -269,9 +270,9 @@ namespace Echoes
 
     public class Enemy : MonoBehaviour
     {
-        public float hp = 120f, damage = 12f, speed = 2.2f, attackRange = 1.4f;
-        public float attackCooldown = 1.2f;
-        private float _atkTimer;
+        public float hp = 120f, damage = 12f, speed = 1.6f, attackRange = 1.8f;
+        public float attackCooldown = 1.5f;
+        private float _atkTimer = 1.5f;   // give player time before first hit
         private Transform _target;
 
         private void Start()
@@ -313,8 +314,8 @@ namespace Echoes
     public class Boss : MonoBehaviour
     {
         public float maxHp = 1400f, hp;
-        public float damage = 35f, speed = 2.4f;
-        private float _abilityTimer = 2f;
+        public float damage = 35f, speed = 1.8f;
+        private float _abilityTimer = 3.5f;   // first telegraph delay
         private int _phase = 0;
         private Transform _target;
 
