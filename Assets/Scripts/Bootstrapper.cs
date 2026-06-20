@@ -1,1307 +1,665 @@
-// =============================================================================
-// Echoes: Shattered Pantheon — Iteration P (Path C: 2D Hades-style)
-// =============================================================================
-// FULL 2D REWRITE: orthographic camera + SpriteRenderer + tilemap.
-// NO MORE CAPSULES. NO MORE CreatePrimitive(). All visuals = real sprites.
-// =============================================================================
+// Echoes: Shattered Pantheon - Episode 1: Fall of Olympus
+// Visual Novel (Path G) - bilingual EN/RU, single linear ending
+// Bootstrapper.cs - all-in-one runtime, no scene wiring required
+using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 using UnityEngine.UI;
 
 public class Bootstrapper : MonoBehaviour
 {
-    // ============================================================
-    #region Constants/State
-    // ============================================================
-    enum Zone { None, AwakeningGrove, BrokenAgora, AltarArena, Victory, Defeat }
-    enum State { Boot, InZone, Dialog, Won, Lost }
-    enum EnemyType { Scout, Warrior, Archer, Shieldbearer, Priest }
+    // ============ ENUMS ============
+    enum State { Title, Playing, Choice, Ended }
+    enum Lang { EN, RU }
 
-    State state = State.Boot;
-    Zone currentZone = Zone.None;
-
-    [System.Serializable]
-    public class QuestFlags {
-        public bool talkedPythia;
-        public int  killedScoutsZ1;
-        public bool unlockedZone2;
-        public bool talkedHermes;
-        public bool unlockedAegis;
-        public int  killedAgoraZ2;
-        public bool unlockedZone3;
-        public bool bossDefeated;
+    // ============ STORY MODEL ============
+    class Line
+    {
+        public string speaker;   // ID portrait (or "" for narrator)
+        public string bg;        // background sprite ID
+        public string bgm;       // music ID ("" = keep)
+        public string sfx;       // one-shot sfx
+        public string en;
+        public string ru;
+        public Choice[] choices; // null if just a line
     }
-    QuestFlags Q = new QuestFlags();
-    #endregion
+    class Choice { public string en; public string ru; }
 
-    // ============================================================
-    #region World / Refs
-    // ============================================================
-    Camera mainCam;
-    GameObject worldRoot;
-    GameObject player;
-    GameObject pythia;
-    GameObject hermes;
-    GameObject boss;
-    GameObject altarHammer;
-    GameObject zoneTrigger;
-    SpriteRenderer playerSR;
+    // ============ FIELDS ============
+    Lang lang = Lang.EN;
+    State state = State.Title;
+    int idx = 0;
+    List<Line> script;
 
-    class EnemyAgent {
-        public GameObject go;
-        public SpriteRenderer sr;
-        public EnemyType type;
-        public float hp, hpMax;
-        public float dmg;
-        public float speed;
-        public float range;
-        public bool isRanged, isHealer;
-        public float rangedCD, rangedTimer;
-        public float hitFlashT;
-    }
-    List<EnemyAgent> enemies = new List<EnemyAgent>();
-    List<GameObject> vfxList = new List<GameObject>();
-    List<float> vfxTTL = new List<float>();
-    List<float> vfxStartScale = new List<float>();
-    List<float> vfxEndScale = new List<float>();
-    List<float> vfxBornTime = new List<float>();
-    List<SpriteRenderer> vfxSR = new List<SpriteRenderer>();
+    // Sprites
+    Dictionary<string, Sprite> sprites = new Dictionary<string, Sprite>();
+    Dictionary<string, AudioClip> clips = new Dictionary<string, AudioClip>();
+
+    // UI
+    Canvas canvas;
+    Image bgImage, portraitImage, dialogBox, titleBg;
+    Text dialogText, speakerText, titleText, subtitleText, langBtnText;
+    GameObject titlePanel, gamePanel, choicePanel, endPanel;
+    Button startBtn, continueBtn, langBtn, restartBtn;
+    List<Button> choiceButtons = new List<Button>();
 
     // Audio
-    AudioSource bgmSource, sfxSource;
-    AudioClip clipBGM, clipSlam, clipInferno, clipHit;
+    AudioSource bgmSrc, sfxSrc;
+    string currentBgm = "";
 
-    // Sprites loaded once
-    Sprite spPlayer, spScout, spWarrior, spBoss, spPythia, spHermes;
-    Sprite spTileGround, spBgArena;
-    Sprite spVfxSlam, spVfxInferno, spVfxAegis, spVfxHit;
-    Sprite spIconSlam, spIconInferno, spIconAegis;
+    // Typewriter
+    string fullText = "";
+    int typeIdx = 0;
+    float typeTimer = 0f;
+    const float TYPE_SPEED = 0.025f;
+    bool typing = false;
 
-    // Player stats
-    float playerHP = 500f, playerHPMax = 500f;
-    float playerMP = 200f, playerMPMax = 200f;
-    float playerSpeed = 7f;
-    float aegisActive = 0f;
-    float damageFlashTimer = 0f;
-    float playerHitFlashT = 0f;
-    float playerFacing = 1f; // -1 left, +1 right
+    // Fade
+    Image fadeOverlay;
+    float fadeAlpha = 1f;
+    int fadeDir = -1; // -1 fade in, +1 fade out, 0 idle
 
-    // Boss
-    float bossHP = 1500f, bossHPMax = 1500f;
-    int bossPhase = 1;
-    float bossTelegraph = 0f;
-    Vector3 bossTelegraphPos;
-    GameObject bossTelegraphGO;
-    SpriteRenderer bossTelegraphSR;
-    int bossAddsSpawned = 0;
-    float bossHitFlashT = 0f;
-
-    // Skills
-    float[] skillCD = new float[3];
-    float[] skillFlashT = new float[3];
-    const float SLAM_RANGE = 4.5f;
-    const float INFERNO_RANGE = 7.5f;
-
-    // Input
-    int joyTouchId = -1;
-    Vector2 joyCenterScreenPx;
-    float joyRadiusPx;
-    Vector2 joystickInput = Vector2.zero;
-    const float JOY_RADIUS_PX_REF = 160f;
-    Rect rectSlam, rectInferno, rectAegis;
-
-    // HUD
-    Canvas hudCanvas;
-    RectTransform joyBgRT, joyHandleRT;
-    Image hpFillImg, mpFillImg, damageFlashImg;
-    Image victoryOverlayImg, defeatOverlayImg;
-    Image slamBtnImg, infernoBtnImg, aegisBtnImg;
-    Image slamIconImg, infernoIconImg, aegisIconImg;
-    Text txtQuestLog, txtAction, txtDiag, txtZoneName;
-    Text txtVictory, txtDefeat;
-    GameObject dialogPanelGO;
-    Image dialogPanelImg;
-    Text dialogSpeakerText, dialogBodyText;
-
-    // Dialog
-    enum DialogId { None, PythiaIntro, PythiaAfterScouts, HermesIntro, HermesGiveAegis, HermesBeforeBoss }
-    DialogId activeDialog = DialogId.None;
-    int dialogLine = 0;
-    string[][] dialogScript;
-    float dialogTypeT = 0f;
-    int dialogTypeChar = 0;
-    bool dialogTouchPrev = false;
-    System.Action onDialogClose;
-
-    string actionText = "";
-    float actionTextT = 0f;
-
-    float waveStartDelay = 1.0f;
-    float spawnedWave = 0f;
-
-    bool tappedSlam, tappedInferno, tappedAegis, tappedDialogContinue;
-
-    // Sorting orders
-    const int SORT_BG       = -100;
-    const int SORT_GROUND   = -90;
-    const int SORT_VFX_LOW  = 5;
-    const int SORT_NPC      = 10;
-    const int SORT_ENEMY    = 20;
-    const int SORT_PLAYER   = 30;
-    const int SORT_BOSS     = 25;
-    const int SORT_VFX_HI   = 50;
-    #endregion
-
-    // ============================================================
-    #region Lifecycle
-    // ============================================================
-    void Awake() {
-        Screen.orientation = ScreenOrientation.Portrait;
+    // ============ ENTRY ============
+    void Start()
+    {
         Application.targetFrameRate = 60;
+        Screen.orientation = ScreenOrientation.Portrait;
         QualitySettings.vSyncCount = 0;
 
-        LoadAllResources();
-        LoadGame();
-        BuildCamera2D();
-        BuildHUD();
-        ComputeButtonRects();
-        SetupAudio();
-        InitDialogScripts();
-
-        if (currentZone == Zone.None) currentZone = Zone.AwakeningGrove;
-        EnterZone(currentZone);
-        state = State.InZone;
+        LoadAllSprites();
+        LoadAllAudio();
+        BuildUI();
+        BuildScript();
+        LoadProgress();
+        ShowTitle();
     }
 
-    void LoadAllResources() {
-        spPlayer      = LoadSprite("sprite_player");
-        spScout       = LoadSprite("sprite_scout");
-        spWarrior     = LoadSprite("sprite_warrior");
-        spBoss        = LoadSprite("sprite_boss");
-        spPythia      = LoadSprite("sprite_pythia");
-        spHermes      = LoadSprite("sprite_hermes");
-        spTileGround  = LoadSprite("tile_ground");
-        spBgArena     = LoadSprite("bg_arena");
-        spVfxSlam     = LoadSprite("vfx_slam");
-        spVfxInferno  = LoadSprite("vfx_inferno");
-        spVfxAegis    = LoadSprite("vfx_aegis");
-        spVfxHit      = LoadSprite("vfx_hit");
-        spIconSlam    = LoadSprite("icon_slam");
-        spIconInferno = LoadSprite("icon_inferno");
-        spIconAegis   = LoadSprite("icon_aegis");
-
-        clipBGM     = Resources.Load<AudioClip>("bgm_olympus");
-        clipSlam    = Resources.Load<AudioClip>("sfx_slam");
-        clipInferno = Resources.Load<AudioClip>("sfx_inferno");
-        clipHit     = Resources.Load<AudioClip>("sfx_hit");
-    }
-
-    Sprite LoadSprite(string name) {
-        Texture2D t = Resources.Load<Texture2D>(name);
-        if (t == null) return null;
-        return Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f), 100f);
-    }
-    #endregion
-
-    // ============================================================
-    #region Save/Load
-    // ============================================================
-    void SaveGame() {
-        PlayerPrefs.SetInt("Q_talkedPythia", Q.talkedPythia ? 1 : 0);
-        PlayerPrefs.SetInt("Q_killedScoutsZ1", Q.killedScoutsZ1);
-        PlayerPrefs.SetInt("Q_unlockedZone2", Q.unlockedZone2 ? 1 : 0);
-        PlayerPrefs.SetInt("Q_talkedHermes", Q.talkedHermes ? 1 : 0);
-        PlayerPrefs.SetInt("Q_unlockedAegis", Q.unlockedAegis ? 1 : 0);
-        PlayerPrefs.SetInt("Q_killedAgoraZ2", Q.killedAgoraZ2);
-        PlayerPrefs.SetInt("Q_unlockedZone3", Q.unlockedZone3 ? 1 : 0);
-        PlayerPrefs.SetInt("Q_bossDefeated", Q.bossDefeated ? 1 : 0);
-        PlayerPrefs.SetInt("Q_currentZone", (int)currentZone);
-        PlayerPrefs.Save();
-    }
-
-    void LoadGame() {
-        Q.talkedPythia = PlayerPrefs.GetInt("Q_talkedPythia", 0) == 1;
-        Q.killedScoutsZ1 = PlayerPrefs.GetInt("Q_killedScoutsZ1", 0);
-        Q.unlockedZone2 = PlayerPrefs.GetInt("Q_unlockedZone2", 0) == 1;
-        Q.talkedHermes = PlayerPrefs.GetInt("Q_talkedHermes", 0) == 1;
-        Q.unlockedAegis = PlayerPrefs.GetInt("Q_unlockedAegis", 0) == 1;
-        Q.killedAgoraZ2 = PlayerPrefs.GetInt("Q_killedAgoraZ2", 0);
-        Q.unlockedZone3 = PlayerPrefs.GetInt("Q_unlockedZone3", 0) == 1;
-        Q.bossDefeated = PlayerPrefs.GetInt("Q_bossDefeated", 0) == 1;
-        currentZone = (Zone)PlayerPrefs.GetInt("Q_currentZone", (int)Zone.AwakeningGrove);
-    }
-
-    void ResetSave() {
-        PlayerPrefs.DeleteAll();
-        PlayerPrefs.Save();
-        Q = new QuestFlags();
-        currentZone = Zone.AwakeningGrove;
-    }
-    #endregion
-
-    // ============================================================
-    #region Camera (2D Orthographic)
-    // ============================================================
-    void BuildCamera2D() {
-        GameObject g = new GameObject("MainCamera");
-        g.tag = "MainCamera";
-        mainCam = g.AddComponent<Camera>();
-        mainCam.orthographic = true;
-        mainCam.orthographicSize = 8f; // Field of view: ~16 units vertical
-        mainCam.clearFlags = CameraClearFlags.SolidColor;
-        mainCam.backgroundColor = new Color(0.05f, 0.03f, 0.08f, 1f);
-        mainCam.transform.position = new Vector3(0f, 0f, -10f);
-        mainCam.transform.rotation = Quaternion.identity;
-        mainCam.nearClipPlane = 0.1f;
-        mainCam.farClipPlane = 100f;
-        g.AddComponent<AudioListener>();
-    }
-    #endregion
-
-    // ============================================================
-    #region World Builder
-    // ============================================================
-    void ClearWorld() {
-        if (worldRoot != null) Object.Destroy(worldRoot);
-        worldRoot = new GameObject("WorldRoot");
-        foreach (var e in enemies) if (e != null && e.go != null) Object.Destroy(e.go);
-        enemies.Clear();
-        if (boss != null) { Object.Destroy(boss); boss = null; }
-        if (pythia != null) { Object.Destroy(pythia); pythia = null; }
-        if (hermes != null) { Object.Destroy(hermes); hermes = null; }
-        if (altarHammer != null) { Object.Destroy(altarHammer); altarHammer = null; }
-        if (zoneTrigger != null) { Object.Destroy(zoneTrigger); zoneTrigger = null; }
-        if (bossTelegraphGO != null) { Object.Destroy(bossTelegraphGO); bossTelegraphGO = null; }
-        foreach (var v in vfxList) if (v != null) Object.Destroy(v);
-        vfxList.Clear();
-        vfxTTL.Clear();
-        vfxStartScale.Clear();
-        vfxEndScale.Clear();
-        vfxBornTime.Clear();
-        vfxSR.Clear();
-        if (player != null) { Object.Destroy(player); player = null; playerSR = null; }
-    }
-
-    GameObject MakeSpriteGO(string name, Sprite s, Vector3 pos, float worldSize, int sortOrder, Transform parent = null) {
-        GameObject g = new GameObject(name);
-        if (parent != null) g.transform.SetParent(parent, false);
-        g.transform.position = pos;
-        SpriteRenderer sr = g.AddComponent<SpriteRenderer>();
-        sr.sprite = s;
-        sr.sortingOrder = sortOrder;
-        // Calculate scale so sprite is `worldSize` units tall
-        if (s != null) {
-            float pixelHeight = s.rect.height;
-            float ppu = s.pixelsPerUnit;
-            float spriteWorldH = pixelHeight / ppu;
-            float scale = worldSize / Mathf.Max(0.001f, spriteWorldH);
-            g.transform.localScale = new Vector3(scale, scale, 1f);
-        }
-        return g;
-    }
-
-    void EnterZone(Zone z) {
-        ClearWorld();
-        currentZone = z;
-        SaveGame();
-
-        // Build ground tilemap (large grid)
-        BuildGroundTiles(z);
-
-        // Build player
-        player = MakeSpriteGO("Player", spPlayer, new Vector3(0f, -3f, 0f), 1.6f, SORT_PLAYER, worldRoot.transform);
-        playerSR = player.GetComponent<SpriteRenderer>();
-        playerHP = playerHPMax;
-        playerMP = playerMPMax;
-
-        switch (z) {
-            case Zone.AwakeningGrove:
-                SetZoneName("Awakening Grove");
-                pythia = MakeSpriteGO("Pythia", spPythia, new Vector3(0f, 4f, 0f), 1.8f, SORT_NPC, worldRoot.transform);
-                SpawnScouts();
-                if (!Q.talkedPythia) StartDialog(DialogId.PythiaIntro, null);
-                break;
-
-            case Zone.BrokenAgora:
-                SetZoneName("Broken Agora");
-                hermes = MakeSpriteGO("Hermes", spHermes, new Vector3(5f, 4f, 0f), 1.8f, SORT_NPC, worldRoot.transform);
-                SpawnAgoraEnemies();
-                if (!Q.talkedHermes) StartDialog(DialogId.HermesIntro, null);
-                break;
-
-            case Zone.AltarArena:
-                SetZoneName("Altar of Echo");
-                // Big arena background centered
-                MakeSpriteGO("ArenaBG", spBgArena, new Vector3(0f, 0f, 1f), 20f, SORT_BG, worldRoot.transform);
-                altarHammer = MakeSpriteGO("AltarHammer", spVfxSlam, new Vector3(0f, 5f, 0f), 1.5f, SORT_NPC, worldRoot.transform);
-                SpawnBoss(new Vector3(0f, 6f, 0f));
-                StartDialog(DialogId.HermesBeforeBoss, null);
-                break;
-        }
-
-        UpdateQuestLog();
-    }
-
-    void BuildGroundTiles(Zone z) {
-        // Tile a large 40x40 area (16x16 grid of 2.5x2.5 tiles)
-        // For AltarArena, ground tiles still visible but covered partially by bg_arena sprite
-        int gridSize = 16;
-        float tileSize = 3f;
-        float half = gridSize * tileSize * 0.5f;
-        Color tint = new Color(0.85f, 0.80f, 0.75f, 1f);
-        if (z == Zone.BrokenAgora) tint = new Color(0.9f, 0.85f, 0.80f, 1f);
-        if (z == Zone.AltarArena) tint = new Color(0.7f, 0.6f, 0.55f, 1f);
-
-        for (int x = 0; x < gridSize; x++) {
-            for (int y = 0; y < gridSize; y++) {
-                Vector3 p = new Vector3(-half + x * tileSize + tileSize * 0.5f, -half + y * tileSize + tileSize * 0.5f, 0f);
-                GameObject g = MakeSpriteGO("Tile_" + x + "_" + y, spTileGround, p, tileSize, SORT_GROUND, worldRoot.transform);
-                SpriteRenderer sr = g.GetComponent<SpriteRenderer>();
-                if (sr != null) sr.color = tint;
-            }
+    // ============ ASSET LOADING ============
+    void LoadAllSprites()
+    {
+        string[] names = new string[]
+        {
+            "portrait_eon","portrait_pythia","portrait_hermes","portrait_fallen",
+            "bg_sarcophagus","bg_grove","bg_agora","bg_storm","bg_altar","bg_title"
+        };
+        foreach (var n in names)
+        {
+            var tex = Resources.Load<Texture2D>(n);
+            if (tex == null) { Debug.LogWarning("Missing sprite: " + n); continue; }
+            sprites[n] = Sprite.Create(tex, new Rect(0,0,tex.width,tex.height), new Vector2(0.5f,0.5f), 100f);
         }
     }
 
-    void SpawnScouts() {
-        for (int i = 0; i < 2; i++) {
-            float ang = i * Mathf.PI;
-            Vector3 p = new Vector3(Mathf.Cos(ang) * 5f, 1f + Mathf.Sin(ang) * 2f, 0f);
-            SpawnEnemy(EnemyType.Scout, p);
+    void LoadAllAudio()
+    {
+        string[] names = new string[]{ "bgm_olympus","bgm_tense","sfx_blip","sfx_choice","sfx_transition" };
+        foreach (var n in names)
+        {
+            var c = Resources.Load<AudioClip>(n);
+            if (c == null) { Debug.LogWarning("Missing audio: " + n); continue; }
+            clips[n] = c;
         }
     }
 
-    void SpawnAgoraEnemies() {
-        SpawnEnemy(EnemyType.Warrior,      new Vector3(-6f, 2f, 0f));
-        SpawnEnemy(EnemyType.Warrior,      new Vector3( 6f, 2f, 0f));
-        SpawnEnemy(EnemyType.Archer,       new Vector3( 0f, 7f, 0f));
-        SpawnEnemy(EnemyType.Shieldbearer, new Vector3(-4f, 5f, 0f));
-        SpawnEnemy(EnemyType.Priest,       new Vector3( 4f, 5f, 0f));
-        SpawnEnemy(EnemyType.Scout,        new Vector3( 0f,-2f, 0f));
+    // ============ UI BUILD ============
+    void BuildUI()
+    {
+        var canvasGO = new GameObject("Canvas");
+        canvas = canvasGO.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvasGO.AddComponent<CanvasScaler>().referenceResolution = new Vector2(1080,1920);
+        canvasGO.AddComponent<GraphicRaycaster>();
+
+        var esGO = new GameObject("EventSystem");
+        esGO.AddComponent<UnityEngine.EventSystems.EventSystem>();
+        esGO.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
+
+        // Background
+        bgImage = MakeImage(canvas.transform, "BG", new Color(0,0,0,1));
+        Stretch(bgImage.rectTransform);
+
+        // Portrait (center-right, large)
+        portraitImage = MakeImage(canvas.transform, "Portrait", new Color(1,1,1,0));
+        var pr = portraitImage.rectTransform;
+        pr.anchorMin = new Vector2(0.5f,0.5f); pr.anchorMax = new Vector2(0.5f,0.5f);
+        pr.anchoredPosition = new Vector2(0, 80);
+        pr.sizeDelta = new Vector2(720, 1100);
+        portraitImage.preserveAspect = true;
+
+        // Dialog box
+        dialogBox = MakeImage(canvas.transform, "DialogBox", new Color(0.05f,0.04f,0.08f,0.88f));
+        var db = dialogBox.rectTransform;
+        db.anchorMin = new Vector2(0,0); db.anchorMax = new Vector2(1,0);
+        db.pivot = new Vector2(0.5f,0); db.anchoredPosition = new Vector2(0,40);
+        db.sizeDelta = new Vector2(-80, 520);
+        AddOutline(dialogBox.gameObject, new Color(0.9f,0.75f,0.3f,1f), 3);
+
+        // Speaker name
+        speakerText = MakeText(dialogBox.transform, "Speaker", "", 42, new Color(1f,0.85f,0.4f,1f));
+        var st = speakerText.rectTransform;
+        st.anchorMin = new Vector2(0,1); st.anchorMax = new Vector2(1,1);
+        st.pivot = new Vector2(0,1); st.anchoredPosition = new Vector2(40,-25);
+        st.sizeDelta = new Vector2(-80, 60);
+        speakerText.fontStyle = FontStyle.Bold;
+
+        // Dialog text
+        dialogText = MakeText(dialogBox.transform, "Dialog", "", 36, new Color(0.95f,0.95f,0.92f,1f));
+        var dt = dialogText.rectTransform;
+        dt.anchorMin = new Vector2(0,0); dt.anchorMax = new Vector2(1,1);
+        dt.offsetMin = new Vector2(40, 110); dt.offsetMax = new Vector2(-40, -90);
+        dialogText.alignment = TextAnchor.UpperLeft;
+
+        // Tap-to-advance overlay (covers screen except choice/end panels)
+        var tapGO = new GameObject("TapArea");
+        tapGO.transform.SetParent(canvas.transform, false);
+        var tapImg = tapGO.AddComponent<Image>();
+        tapImg.color = new Color(0,0,0,0); tapImg.raycastTarget = true;
+        Stretch(tapImg.rectTransform);
+        var tapBtn = tapGO.AddComponent<Button>();
+        tapBtn.transition = Selectable.Transition.None;
+        tapBtn.onClick.AddListener(OnTap);
+
+        // Move dialog box on top of tap area
+        dialogBox.transform.SetAsLastSibling();
+
+        // === Title Panel ===
+        titlePanel = new GameObject("TitlePanel");
+        titlePanel.transform.SetParent(canvas.transform, false);
+        var tpRT = titlePanel.AddComponent<RectTransform>();
+        Stretch(tpRT);
+        titleBg = MakeImage(titlePanel.transform, "TitleBG", Color.black);
+        Stretch(titleBg.rectTransform);
+
+        titleText = MakeText(titlePanel.transform, "Title",
+            "ECHOES\nSHATTERED PANTHEON", 96, new Color(1f,0.85f,0.4f,1f));
+        var tt = titleText.rectTransform;
+        tt.anchorMin = new Vector2(0.5f,0.5f); tt.anchorMax = new Vector2(0.5f,0.5f);
+        tt.anchoredPosition = new Vector2(0, 380); tt.sizeDelta = new Vector2(1000, 320);
+        titleText.alignment = TextAnchor.MiddleCenter;
+        titleText.fontStyle = FontStyle.Bold;
+
+        subtitleText = MakeText(titlePanel.transform, "Subtitle",
+            "Episode 1: Fall of Olympus", 48, new Color(0.85f,0.85f,0.85f,1f));
+        var sub = subtitleText.rectTransform;
+        sub.anchorMin = new Vector2(0.5f,0.5f); sub.anchorMax = new Vector2(0.5f,0.5f);
+        sub.anchoredPosition = new Vector2(0, 180); sub.sizeDelta = new Vector2(1000, 80);
+        subtitleText.alignment = TextAnchor.MiddleCenter;
+
+        startBtn = MakeButton(titlePanel.transform, "StartBtn", "NEW STORY / НАЧАТЬ",
+            new Vector2(0,-100), new Vector2(640, 130));
+        startBtn.onClick.AddListener(OnStartNew);
+
+        continueBtn = MakeButton(titlePanel.transform, "ContBtn", "CONTINUE / ПРОДОЛЖИТЬ",
+            new Vector2(0,-260), new Vector2(640, 130));
+        continueBtn.onClick.AddListener(OnContinue);
+
+        langBtn = MakeButton(titlePanel.transform, "LangBtn", "EN | RU",
+            new Vector2(0,-420), new Vector2(640, 110));
+        langBtn.onClick.AddListener(OnToggleLang);
+        langBtnText = langBtn.GetComponentInChildren<Text>();
+
+        // === Choice Panel ===
+        choicePanel = new GameObject("ChoicePanel");
+        choicePanel.transform.SetParent(canvas.transform, false);
+        var cpRT = choicePanel.AddComponent<RectTransform>();
+        Stretch(cpRT);
+        var cpBg = MakeImage(choicePanel.transform, "CpBG", new Color(0,0,0,0.55f));
+        Stretch(cpBg.rectTransform);
+        // 3 buttons stacked center
+        for (int i=0;i<3;i++)
+        {
+            var b = MakeButton(choicePanel.transform, "Choice"+i, "—",
+                new Vector2(0, 220 - i*200), new Vector2(900, 170));
+            int captured = i;
+            b.onClick.AddListener(()=>OnChoicePicked(captured));
+            choiceButtons.Add(b);
+        }
+        choicePanel.SetActive(false);
+
+        // === End Panel ===
+        endPanel = new GameObject("EndPanel");
+        endPanel.transform.SetParent(canvas.transform, false);
+        var epRT = endPanel.AddComponent<RectTransform>();
+        Stretch(epRT);
+        var epBg = MakeImage(endPanel.transform, "EpBG", new Color(0,0,0,0.92f));
+        Stretch(epBg.rectTransform);
+        var endTitle = MakeText(endPanel.transform, "EndTitle",
+            "TO BE CONTINUED\nПРОДОЛЖЕНИЕ СЛЕДУЕТ", 72, new Color(1f,0.85f,0.4f,1f));
+        var etRT = endTitle.rectTransform;
+        etRT.anchorMin = new Vector2(0.5f,0.5f); etRT.anchorMax = new Vector2(0.5f,0.5f);
+        etRT.anchoredPosition = new Vector2(0, 240); etRT.sizeDelta = new Vector2(1000, 320);
+        endTitle.alignment = TextAnchor.MiddleCenter;
+        endTitle.fontStyle = FontStyle.Bold;
+        restartBtn = MakeButton(endPanel.transform, "RestartBtn",
+            "RESTART / ЗАНОВО", new Vector2(0,-120), new Vector2(640, 130));
+        restartBtn.onClick.AddListener(OnRestart);
+        endPanel.SetActive(false);
+
+        // === Fade overlay (on top of everything) ===
+        fadeOverlay = MakeImage(canvas.transform, "Fade", Color.black);
+        Stretch(fadeOverlay.rectTransform);
+        fadeOverlay.transform.SetAsLastSibling();
+        fadeOverlay.raycastTarget = false;
+
+        // Audio sources
+        var aGO = new GameObject("Audio");
+        aGO.transform.SetParent(transform, false);
+        bgmSrc = aGO.AddComponent<AudioSource>();
+        bgmSrc.loop = true; bgmSrc.volume = 0.55f;
+        sfxSrc = aGO.AddComponent<AudioSource>();
+        sfxSrc.loop = false; sfxSrc.volume = 0.85f;
     }
 
-    void SpawnEnemy(EnemyType t, Vector3 pos) {
-        EnemyAgent a = new EnemyAgent();
-        a.type = t;
-        Sprite spr = spScout;
-        float worldSize = 1.4f;
-        switch (t) {
-            case EnemyType.Scout:        spr = spScout;    worldSize = 1.3f; a.hp=a.hpMax=60f;  a.dmg=8f;  a.speed=2.6f; a.range=1.6f; break;
-            case EnemyType.Warrior:      spr = spWarrior;  worldSize = 1.5f; a.hp=a.hpMax=120f; a.dmg=14f; a.speed=2.2f; a.range=1.7f; break;
-            case EnemyType.Archer:       spr = spScout;    worldSize = 1.4f; a.hp=a.hpMax=80f;  a.dmg=20f; a.speed=1.8f; a.range=6f; a.isRanged=true; a.rangedCD=2f; break;
-            case EnemyType.Shieldbearer: spr = spWarrior;  worldSize = 1.8f; a.hp=a.hpMax=220f; a.dmg=10f; a.speed=1.5f; a.range=1.8f; break;
-            case EnemyType.Priest:       spr = spPythia;   worldSize = 1.6f; a.hp=a.hpMax=100f; a.dmg=0f;  a.speed=2.0f; a.range=4f; a.isHealer=true; break;
-        }
-        a.go = MakeSpriteGO("Enemy_" + t, spr, pos, worldSize, SORT_ENEMY, worldRoot.transform);
-        a.sr = a.go.GetComponent<SpriteRenderer>();
-        // Tint enemies red except priest
-        if (a.sr != null) {
-            if (t == EnemyType.Priest) a.sr.color = new Color(0.85f, 0.7f, 1f);
-            else if (t == EnemyType.Archer) a.sr.color = new Color(1f, 0.85f, 0.4f);
-            else if (t == EnemyType.Shieldbearer) a.sr.color = new Color(0.8f, 0.65f, 0.4f);
-            else a.sr.color = new Color(1f, 0.65f, 0.65f);
-        }
-        enemies.Add(a);
-    }
-
-    void SpawnBoss(Vector3 pos) {
-        boss = MakeSpriteGO("FallenHoplite", spBoss, pos, 3.2f, SORT_BOSS, worldRoot.transform);
-        SpriteRenderer sr = boss.GetComponent<SpriteRenderer>();
-        if (sr != null) sr.color = new Color(0.85f, 0.7f, 1f);
-        bossHP = bossHPMax;
-        bossPhase = 1;
-        bossTelegraph = 0f;
-        bossAddsSpawned = 0;
-        bossHitFlashT = 0f;
-    }
-
-    void SpawnPortalToNextZone(Vector3 pos) {
-        zoneTrigger = MakeSpriteGO("ZonePortal", spVfxAegis, pos, 2.5f, SORT_VFX_LOW, worldRoot.transform);
-        SpriteRenderer sr = zoneTrigger.GetComponent<SpriteRenderer>();
-        if (sr != null) sr.color = new Color(0.4f, 0.8f, 1f, 0.85f);
-    }
-    #endregion
-
-    // ============================================================
-    #region Input
-    // ============================================================
-    void ComputeButtonRects() {
-        float sw = Screen.width, sh = Screen.height;
-        float refW = 1080f, refH = 1920f;
-        float scaleW = sw/refW, scaleH = sh/refH;
-        float scale = Mathf.Lerp(scaleW, scaleH, 0.5f);
-        joyRadiusPx = JOY_RADIUS_PX_REF * scale;
-
-        float btnSize = 200f * scale;
-        float half = btnSize * 0.5f;
-        Vector2 cSlam   = new Vector2(sw + (-110f)*scale, (140f)*scale);
-        Vector2 cInf    = new Vector2(sw + (-320f)*scale, (140f)*scale);
-        Vector2 cAegis  = new Vector2(sw + (-110f)*scale, (360f)*scale);
-        rectSlam    = new Rect(cSlam.x - half,  cSlam.y - half,  btnSize, btnSize);
-        rectInferno = new Rect(cInf.x - half,   cInf.y - half,   btnSize, btnSize);
-        rectAegis   = new Rect(cAegis.x - half, cAegis.y - half, btnSize, btnSize);
-        joyCenterScreenPx = new Vector2(240f*scale, 240f*scale);
-    }
-
-    void ReadInput() {
-        tappedSlam = tappedInferno = tappedAegis = false;
-        tappedDialogContinue = false;
-        bool anyJoyTouch = false;
-
-        if (Input.touchCount > 0) {
-            for (int i = 0; i < Input.touchCount; i++) {
-                Touch t = Input.GetTouch(i);
-                Vector2 pos = t.position;
-                int phase = (int)t.phase;
-
-                if (phase == 0) {
-                    if (rectSlam.Contains(pos))    { tappedSlam = true; continue; }
-                    if (rectInferno.Contains(pos)) { tappedInferno = true; continue; }
-                    if (rectAegis.Contains(pos))   { tappedAegis = true; continue; }
-                    if (joyTouchId < 0 && pos.x < Screen.width * 0.5f) {
-                        joyTouchId = t.fingerId;
-                        UpdateJoyHandle(pos);
-                        anyJoyTouch = true;
-                    } else {
-                        tappedDialogContinue = true;
-                    }
-                } else if (phase == 1 || phase == 2) {
-                    if (t.fingerId == joyTouchId) {
-                        UpdateJoyHandle(pos);
-                        anyJoyTouch = true;
-                    }
-                } else if (phase == 3 || phase == 4) {
-                    if (t.fingerId == joyTouchId) joyTouchId = -1;
-                }
-            }
-        }
-        else if (Input.GetMouseButtonDown(0)) {
-            Vector3 mp = Input.mousePosition;
-            Vector2 pos = new Vector2(mp.x, mp.y);
-            if (rectSlam.Contains(pos))         tappedSlam = true;
-            else if (rectInferno.Contains(pos)) tappedInferno = true;
-            else if (rectAegis.Contains(pos))   tappedAegis = true;
-            else tappedDialogContinue = true;
-        }
-
-        // Constraint 39: zero joystick when no touch
-        if (!anyJoyTouch && joyTouchId < 0) {
-            joystickInput = Vector2.zero;
-            if (joyHandleRT != null) joyHandleRT.anchoredPosition = Vector2.zero;
-        }
-    }
-
-    void UpdateJoyHandle(Vector2 touchScreenPx) {
-        Vector2 delta = touchScreenPx - joyCenterScreenPx;
-        if (delta.magnitude > joyRadiusPx) delta = delta.normalized * joyRadiusPx;
-        float n = delta.magnitude / joyRadiusPx;
-        if (n < 0.15f) joystickInput = Vector2.zero;
-        else joystickInput = delta / joyRadiusPx;
-        if (joyHandleRT != null) joyHandleRT.anchoredPosition = delta;
-    }
-    #endregion
-
-    // ============================================================
-    #region Player
-    // ============================================================
-    void UpdatePlayer(float dt) {
-        if (player == null) return;
-
-        if (joystickInput.sqrMagnitude > 0.02f) {
-            Vector3 mv = new Vector3(joystickInput.x, joystickInput.y, 0f) * playerSpeed * dt;
-            Vector3 p = player.transform.position + mv;
-            p.x = Mathf.Clamp(p.x, -22f, 22f);
-            p.y = Mathf.Clamp(p.y, -22f, 22f);
-            player.transform.position = p;
-            // Flip player based on horizontal velocity
-            if (joystickInput.x > 0.1f) playerFacing = 1f;
-            else if (joystickInput.x < -0.1f) playerFacing = -1f;
-            if (playerSR != null) {
-                Vector3 ls = player.transform.localScale;
-                ls.x = Mathf.Abs(ls.x) * playerFacing;
-                player.transform.localScale = ls;
-            }
-        }
-
-        playerMP = Mathf.Min(playerMPMax, playerMP + 10f * dt);
-        if (aegisActive > 0f) aegisActive -= dt;
-        if (damageFlashTimer > 0f) damageFlashTimer -= dt;
-        if (playerHitFlashT > 0f) {
-            playerHitFlashT -= dt;
-            if (playerSR != null) {
-                float k = Mathf.Clamp01(playerHitFlashT / 0.18f);
-                playerSR.color = Color.Lerp(Color.white, new Color(1f, 0.4f, 0.4f), k);
-            }
-        } else if (playerSR != null) playerSR.color = Color.white;
-
-        for (int i = 0; i < 3; i++) {
-            skillCD[i] = Mathf.Max(0f, skillCD[i] - dt);
-            if (skillFlashT[i] > 0f) skillFlashT[i] -= dt;
-        }
-
-        if (damageFlashTimer <= 0f && playerHP < playerHPMax)
-            playerHP = Mathf.Min(playerHPMax, playerHP + 2f * dt);
-
-        if (playerHP <= 0f && state != State.Lost) {
-            state = State.Lost;
-            ShowDefeat();
-        }
-
-        // Camera follow player (smooth)
-        if (mainCam != null) {
-            Vector3 target = new Vector3(player.transform.position.x, player.transform.position.y, -10f);
-            mainCam.transform.position = Vector3.Lerp(mainCam.transform.position, target, 7f * dt);
-        }
-    }
-    #endregion
-
-    // ============================================================
-    #region Skills
-    // ============================================================
-    void TryCastSlam() {
-        if (skillCD[0] > 0f) { ShowAction("Slam: cooldown"); return; }
-        if (playerMP < 8f) { ShowAction("Slam: not enough MP"); return; }
-        playerMP -= 8f;
-        skillCD[0] = 2.5f;
-        skillFlashT[0] = 0.35f;
-        ShowAction("SLAM!");
-        SpawnVFXSprite(spVfxSlam, player.transform.position, 1f, SLAM_RANGE * 2.2f, 0.45f, new Color(1f,0.85f,0.4f,0.95f));
-        PlaySfx(clipSlam);
-
-        Vector3 pp = player.transform.position;
-        for (int i = enemies.Count - 1; i >= 0; i--) {
-            var a = enemies[i];
-            if (a == null || a.go == null) { enemies.RemoveAt(i); continue; }
-            if (Vector3.Distance(a.go.transform.position, pp) < SLAM_RANGE) {
-                DamageEnemy(a, 100f);
-            }
-        }
-        if (boss != null && Vector3.Distance(boss.transform.position, pp) < SLAM_RANGE) {
-            DamageBoss(100f);
-        }
-    }
-
-    void TryCastInferno() {
-        if (skillCD[1] > 0f) { ShowAction("Inferno: cooldown"); return; }
-        if (playerMP < 14f) { ShowAction("Inferno: not enough MP"); return; }
-        playerMP -= 14f;
-        skillCD[1] = 4f;
-        skillFlashT[1] = 0.35f;
-        ShowAction("INFERNO!");
-        // Spawn inferno forward of player based on facing
-        Vector3 forward = player.transform.position + new Vector3(playerFacing * 2.5f, 0f, 0f);
-        SpawnVFXSprite(spVfxInferno, forward, 1f, INFERNO_RANGE * 1.8f, 0.55f, new Color(1f,0.5f,0.25f,0.95f));
-        PlaySfx(clipInferno);
-
-        Vector3 pp = player.transform.position;
-        for (int i = enemies.Count - 1; i >= 0; i--) {
-            var a = enemies[i];
-            if (a == null || a.go == null) { enemies.RemoveAt(i); continue; }
-            // Cone test: enemy must be in forward direction
-            Vector3 dir = a.go.transform.position - pp;
-            if (dir.magnitude < INFERNO_RANGE && (dir.x * playerFacing) > -1f) {
-                DamageEnemy(a, 160f);
-            }
-        }
-        if (boss != null) {
-            Vector3 dir = boss.transform.position - pp;
-            if (dir.magnitude < INFERNO_RANGE && (dir.x * playerFacing) > -1f) DamageBoss(160f);
-        }
-    }
-
-    void TryCastAegis() {
-        if (!Q.unlockedAegis) { ShowAction("Aegis: locked (find Hermes)"); return; }
-        if (skillCD[2] > 0f) { ShowAction("Aegis: cooldown"); return; }
-        if (playerMP < 12f) { ShowAction("Aegis: not enough MP"); return; }
-        playerMP -= 12f;
-        skillCD[2] = 8f;
-        skillFlashT[2] = 0.35f;
-        aegisActive = 3f;
-        ShowAction("AEGIS!");
-        SpawnVFXSprite(spVfxAegis, player.transform.position, 0.8f, 2.5f, 3f, new Color(0.6f,0.85f,1f,0.7f));
-    }
-    #endregion
-
-    // ============================================================
-    #region Enemy AI
-    // ============================================================
-    void UpdateEnemies(float dt) {
-        if (player == null) return;
-        Vector3 pp = player.transform.position;
-
-        for (int i = enemies.Count - 1; i >= 0; i--) {
-            var a = enemies[i];
-            if (a == null || a.go == null) { enemies.RemoveAt(i); continue; }
-            Vector3 dir = pp - a.go.transform.position;
-            float d = dir.magnitude;
-
-            // Hit flash
-            if (a.hitFlashT > 0f) {
-                a.hitFlashT -= dt;
-                if (a.sr != null) {
-                    float k = Mathf.Clamp01(a.hitFlashT / 0.15f);
-                    a.sr.color = Color.Lerp(GetEnemyTint(a.type), new Color(1f, 0.4f, 0.4f), k);
-                }
-            } else if (a.sr != null) a.sr.color = GetEnemyTint(a.type);
-
-            // Face player
-            if (a.go.transform.localScale.x != 0f) {
-                Vector3 ls = a.go.transform.localScale;
-                float sign = dir.x > 0 ? 1f : (dir.x < 0 ? -1f : Mathf.Sign(ls.x));
-                ls.x = Mathf.Abs(ls.x) * sign;
-                a.go.transform.localScale = ls;
-            }
-
-            if (a.isHealer) {
-                EnemyAgent heal = null; float minD = 4f;
-                foreach (var b in enemies) {
-                    if (b == a || b == null || b.go == null) continue;
-                    if (b.hp >= b.hpMax) continue;
-                    float dd = Vector3.Distance(b.go.transform.position, a.go.transform.position);
-                    if (dd < minD) { minD = dd; heal = b; }
-                }
-                if (heal != null) heal.hp = Mathf.Min(heal.hpMax, heal.hp + 30f * dt);
-                if (d < 4f) a.go.transform.position -= dir.normalized * a.speed * dt;
-                else if (d > 7f) a.go.transform.position += dir.normalized * a.speed * dt;
-            }
-            else if (a.isRanged) {
-                if (d > a.range) a.go.transform.position += dir.normalized * a.speed * dt;
-                else if (d < 5f) a.go.transform.position -= dir.normalized * a.speed * dt;
-                a.rangedTimer -= dt;
-                if (a.rangedTimer <= 0f && d < a.range + 1f) {
-                    a.rangedTimer = a.rangedCD;
-                    if (aegisActive <= 0f) {
-                        playerHP -= a.dmg;
-                        damageFlashTimer = 0.18f;
-                        playerHitFlashT = 0.18f;
-                        SpawnVFXSprite(spVfxHit, player.transform.position, 0.5f, 1.5f, 0.3f, new Color(1f,0.9f,0.5f,1f));
-                        PlaySfx(clipHit);
-                    }
-                }
-            }
-            else {
-                if (d > a.range) a.go.transform.position += dir.normalized * a.speed * dt;
-                else if (aegisActive <= 0f) {
-                    playerHP -= a.dmg * dt;
-                    damageFlashTimer = 0.15f;
-                    if (Random.value < 0.05f) playerHitFlashT = 0.15f;
-                }
-            }
-        }
-    }
-
-    Color GetEnemyTint(EnemyType t) {
-        switch (t) {
-            case EnemyType.Priest: return new Color(0.85f, 0.7f, 1f);
-            case EnemyType.Archer: return new Color(1f, 0.85f, 0.4f);
-            case EnemyType.Shieldbearer: return new Color(0.8f, 0.65f, 0.4f);
-            default: return new Color(1f, 0.65f, 0.65f);
-        }
-    }
-
-    void DamageEnemy(EnemyAgent a, float dmg) {
-        a.hp -= dmg;
-        a.hitFlashT = 0.15f;
-        SpawnVFXSprite(spVfxHit, a.go.transform.position, 0.5f, 1.6f, 0.3f, new Color(1f,0.9f,0.5f,1f));
-        PlaySfx(clipHit);
-        if (a.hp <= 0f) {
-            Object.Destroy(a.go);
-            enemies.Remove(a);
-            OnEnemyKilled();
-        }
-    }
-
-    void OnEnemyKilled() {
-        if (currentZone == Zone.AwakeningGrove) {
-            Q.killedScoutsZ1 = (int)Mathf.Min(2, Q.killedScoutsZ1 + 1);
-            if (Q.killedScoutsZ1 >= 2 && Q.talkedPythia && !Q.unlockedZone2) {
-                StartDialog(DialogId.PythiaAfterScouts, () => {
-                    Q.unlockedZone2 = true;
-                    SpawnPortalToNextZone(new Vector3(0f, 8f, 0f));
-                    UpdateQuestLog();
-                    SaveGame();
-                });
-            }
-        }
-        else if (currentZone == Zone.BrokenAgora) {
-            Q.killedAgoraZ2 = (int)Mathf.Min(6, Q.killedAgoraZ2 + 1);
-            if (Q.killedAgoraZ2 >= 4 && Q.unlockedAegis && !Q.unlockedZone3) {
-                Q.unlockedZone3 = true;
-                SpawnPortalToNextZone(new Vector3(0f, 9f, 0f));
-            }
-        }
-        UpdateQuestLog();
-        SaveGame();
-    }
-    #endregion
-
-    // ============================================================
-    #region Boss
-    // ============================================================
-    void UpdateBoss(float dt) {
-        if (boss == null || player == null) return;
-        Vector3 dir = player.transform.position - boss.transform.position;
-        float d = dir.magnitude;
-
-        if (bossHitFlashT > 0f) {
-            bossHitFlashT -= dt;
-            SpriteRenderer sr = boss.GetComponent<SpriteRenderer>();
-            if (sr != null) {
-                float k = Mathf.Clamp01(bossHitFlashT / 0.2f);
-                sr.color = Color.Lerp(new Color(0.85f, 0.7f, 1f), new Color(1f, 0.4f, 0.4f), k);
-            }
-        }
-
-        float hpPct = bossHP / bossHPMax;
-        int newPhase = hpPct > 0.66f ? 1 : (hpPct > 0.33f ? 2 : 3);
-        if (newPhase != bossPhase) {
-            bossPhase = newPhase;
-            ShowAction("BOSS PHASE " + bossPhase + "!");
-            if (bossPhase == 3 && bossAddsSpawned == 0) {
-                for (int i = 0; i < 3; i++) {
-                    float ang = i * Mathf.PI * 2f / 3f;
-                    Vector3 p = boss.transform.position + new Vector3(Mathf.Cos(ang)*2.5f, Mathf.Sin(ang)*2.5f, 0f);
-                    SpawnEnemy(EnemyType.Scout, p);
-                }
-                bossAddsSpawned = 3;
-            }
-        }
-
-        if (bossTelegraph > 0f) {
-            bossTelegraph -= dt;
-            if (bossTelegraphGO != null) {
-                float t = 1f - bossTelegraph/1.5f;
-                bossTelegraphGO.transform.localScale = new Vector3(0.5f + t*3f, 0.5f + t*3f, 1f);
-            }
-            if (bossTelegraph <= 0f) {
-                if (Vector3.Distance(player.transform.position, bossTelegraphPos) < 3.5f && aegisActive <= 0f) {
-                    playerHP -= 80f;
-                    damageFlashTimer = 0.4f;
-                    playerHitFlashT = 0.3f;
-                }
-                if (bossTelegraphGO != null) { Object.Destroy(bossTelegraphGO); bossTelegraphGO = null; }
-                SpawnVFXSprite(spVfxSlam, bossTelegraphPos, 1f, 4f, 0.5f, new Color(0.7f, 0.3f, 1f, 0.85f));
-            }
-        } else {
-            if (d > 2.5f) boss.transform.position += dir.normalized * 2.5f * dt;
-            else if (aegisActive <= 0f) {
-                playerHP -= 25f * dt;
-                damageFlashTimer = 0.15f;
-            }
-            if (bossPhase >= 2 && Random.value < 0.006f) {
-                bossTelegraph = 1.5f;
-                bossTelegraphPos = player.transform.position;
-                bossTelegraphGO = MakeSpriteGO("BossTel", spVfxSlam, bossTelegraphPos, 1.5f, SORT_VFX_LOW, worldRoot.transform);
-                SpriteRenderer sr = bossTelegraphGO.GetComponent<SpriteRenderer>();
-                if (sr != null) sr.color = new Color(0.7f, 0.2f, 0.9f, 0.5f);
-            }
-        }
-    }
-
-    void DamageBoss(float dmg) {
-        bossHP -= dmg;
-        bossHitFlashT = 0.2f;
-        SpawnVFXSprite(spVfxHit, boss.transform.position, 0.7f, 2f, 0.3f, new Color(1f,0.9f,0.5f,1f));
-        PlaySfx(clipHit);
-        if (bossHP <= 0f) {
-            Object.Destroy(boss); boss = null;
-            Q.bossDefeated = true;
-            SaveGame();
-            ShowVictory();
-        }
-    }
-    #endregion
-
-    // ============================================================
-    #region VFX
-    // ============================================================
-    void SpawnVFXSprite(Sprite s, Vector3 pos, float startSize, float endSize, float ttl, Color tint) {
-        if (s == null) return;
-        GameObject g = MakeSpriteGO("VFX", s, pos, startSize, SORT_VFX_HI, worldRoot != null ? worldRoot.transform : null);
-        SpriteRenderer sr = g.GetComponent<SpriteRenderer>();
-        if (sr != null) sr.color = tint;
-        vfxList.Add(g);
-        vfxTTL.Add(ttl);
-        vfxStartScale.Add(startSize);
-        vfxEndScale.Add(endSize);
-        vfxBornTime.Add(Time.time);
-        vfxSR.Add(sr);
-    }
-
-    void UpdateVFX(float dt) {
-        for (int i = vfxList.Count - 1; i >= 0; i--) {
-            vfxTTL[i] -= dt;
-            if (vfxTTL[i] <= 0f || vfxList[i] == null) {
-                if (vfxList[i] != null) Object.Destroy(vfxList[i]);
-                vfxList.RemoveAt(i);
-                vfxTTL.RemoveAt(i);
-                vfxStartScale.RemoveAt(i);
-                vfxEndScale.RemoveAt(i);
-                vfxBornTime.RemoveAt(i);
-                vfxSR.RemoveAt(i);
-            } else {
-                float age = Time.time - vfxBornTime[i];
-                float total = age + vfxTTL[i];
-                float k = total > 0 ? Mathf.Clamp01(age / total) : 0f;
-                float sz = Mathf.Lerp(vfxStartScale[i], vfxEndScale[i], k);
-                if (vfxList[i] != null) {
-                    // Rescale (sprites have unit size 1f by default after MakeSpriteGO)
-                    GameObject g = vfxList[i];
-                    Sprite s = vfxSR[i] != null ? vfxSR[i].sprite : null;
-                    if (s != null) {
-                        float spriteWorldH = s.rect.height / s.pixelsPerUnit;
-                        float scale = sz / Mathf.Max(0.001f, spriteWorldH);
-                        g.transform.localScale = new Vector3(scale, scale, 1f);
-                    }
-                    if (vfxSR[i] != null) {
-                        Color c = vfxSR[i].color;
-                        c.a = Mathf.Lerp(1f, 0f, k);
-                        vfxSR[i].color = c;
-                    }
-                }
-            }
-        }
-    }
-    #endregion
-
-    // ============================================================
-    #region HUD
-    // ============================================================
-    void BuildHUD() {
-        GameObject canvasGO = new GameObject("HUDCanvas");
-        hudCanvas = canvasGO.AddComponent<Canvas>();
-        hudCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        hudCanvas.sortingOrder = 100;
-        CanvasScaler scaler = canvasGO.AddComponent<CanvasScaler>();
-        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1080f, 1920f);
-        scaler.matchWidthOrHeight = 0.5f;
-        Transform p = canvasGO.transform;
-
-        txtZoneName = MakeText(p, "ZoneName", new Vector2(0.5f,1f), new Vector2(0f,-30f), new Vector2(900f,50f), TextAnchor.MiddleCenter, 36, "Awakening Grove");
-        txtZoneName.color = new Color(1f, 0.9f, 0.6f);
-
-        MakeImage(p, "HPbg", new Vector2(0f,1f), new Vector2(0f,1f), new Vector2(40f,-90f), new Vector2(580f,42f), new Color(0.10f,0.04f,0.04f,0.85f), out _);
-        hpFillImg = MakeImage(p, "HPfill", new Vector2(0f,1f), new Vector2(0f,1f), new Vector2(44f,-94f), new Vector2(572f,34f), new Color(0.85f, 0.12f, 0.12f), out _);
-
-        MakeImage(p, "MPbg", new Vector2(0f,1f), new Vector2(0f,1f), new Vector2(40f,-140f), new Vector2(580f,32f), new Color(0.05f,0.05f,0.18f,0.85f), out _);
-        mpFillImg = MakeImage(p, "MPfill", new Vector2(0f,1f), new Vector2(0f,1f), new Vector2(44f,-144f), new Vector2(572f,24f), new Color(0.2f, 0.45f, 0.95f), out _);
-
-        txtDiag = MakeText(p, "Diag", new Vector2(1f,1f), new Vector2(-30f,-30f), new Vector2(420f,60f), TextAnchor.UpperRight, 20, "v2.0.0");
-        txtDiag.color = new Color(0.7f,0.7f,0.7f);
-
-        MakeImage(p, "QuestBG", new Vector2(0f,1f), new Vector2(0f,1f), new Vector2(20f,-200f), new Vector2(620f,200f), new Color(0f,0f,0f,0.55f), out _);
-        txtQuestLog = MakeText(p, "QuestLog", new Vector2(0f,1f), new Vector2(30f,-210f), new Vector2(600f,190f), TextAnchor.UpperLeft, 22, "");
-        txtQuestLog.color = new Color(1f, 0.95f, 0.7f);
-
-        txtAction = MakeText(p, "Action", new Vector2(0.5f,1f), new Vector2(0f,-440f), new Vector2(900f,60f), TextAnchor.MiddleCenter, 40, "");
-        txtAction.color = new Color(1f, 0.95f, 0.4f);
-
-        // Joystick
-        GameObject joyBg = new GameObject("JoyBG");
-        joyBg.transform.SetParent(p, false);
-        Image jbgImg = joyBg.AddComponent<Image>();
-        jbgImg.color = new Color(1f, 1f, 1f, 0.25f);
-        joyBgRT = joyBg.GetComponent<RectTransform>();
-        joyBgRT.anchorMin = new Vector2(0f, 0f);
-        joyBgRT.anchorMax = new Vector2(0f, 0f);
-        joyBgRT.pivot = new Vector2(0.5f, 0.5f);
-        joyBgRT.anchoredPosition = new Vector2(240f, 240f);
-        joyBgRT.sizeDelta = new Vector2(340f, 340f);
-
-        GameObject joyHnd = new GameObject("JoyHandle");
-        joyHnd.transform.SetParent(joyBg.transform, false);
-        Image jhImg = joyHnd.AddComponent<Image>();
-        jhImg.color = new Color(1f, 0.9f, 0.4f, 0.85f);
-        joyHandleRT = joyHnd.GetComponent<RectTransform>();
-        joyHandleRT.anchorMin = new Vector2(0.5f, 0.5f);
-        joyHandleRT.anchorMax = new Vector2(0.5f, 0.5f);
-        joyHandleRT.pivot = new Vector2(0.5f, 0.5f);
-        joyHandleRT.anchoredPosition = Vector2.zero;
-        joyHandleRT.sizeDelta = new Vector2(140f, 140f);
-
-        slamBtnImg    = BuildSkillBtn(p, "BtnSlam",    new Vector2(-110f, 140f), new Color(0.7f,0.35f,0.10f), spIconSlam,    out slamIconImg);
-        infernoBtnImg = BuildSkillBtn(p, "BtnInferno", new Vector2(-320f, 140f), new Color(0.75f,0.15f,0.10f), spIconInferno, out infernoIconImg);
-        aegisBtnImg   = BuildSkillBtn(p, "BtnAegis",   new Vector2(-110f, 360f), new Color(0.15f,0.40f,0.75f), spIconAegis,   out aegisIconImg);
-
-        damageFlashImg = MakeImage(p, "DmgFlash", Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, new Color(1f,0f,0f,0f), out _);
-        RectTransform dfrt = damageFlashImg.rectTransform;
-        dfrt.anchorMin = Vector2.zero; dfrt.anchorMax = Vector2.one;
-        dfrt.offsetMin = Vector2.zero; dfrt.offsetMax = Vector2.zero;
-
-        victoryOverlayImg = MakeImage(p, "VicOverlay", Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, new Color(0.1f,0.55f,0.2f,0f), out _);
-        RectTransform vrt = victoryOverlayImg.rectTransform;
-        vrt.anchorMin = Vector2.zero; vrt.anchorMax = Vector2.one;
-        vrt.offsetMin = Vector2.zero; vrt.offsetMax = Vector2.zero;
-        txtVictory = MakeText(p, "VicText", new Vector2(0.5f,0.5f), Vector2.zero, new Vector2(1000f,300f), TextAnchor.MiddleCenter, 60, "");
-        txtVictory.color = new Color(1f, 0.95f, 0.4f);
-
-        defeatOverlayImg = MakeImage(p, "DefOverlay", Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, new Color(0.4f,0.05f,0.05f,0f), out _);
-        RectTransform drt = defeatOverlayImg.rectTransform;
-        drt.anchorMin = Vector2.zero; drt.anchorMax = Vector2.one;
-        drt.offsetMin = Vector2.zero; drt.offsetMax = Vector2.zero;
-        txtDefeat = MakeText(p, "DefText", new Vector2(0.5f,0.5f), Vector2.zero, new Vector2(1000f,300f), TextAnchor.MiddleCenter, 60, "");
-        txtDefeat.color = new Color(1f, 0.4f, 0.4f);
-
-        dialogPanelGO = new GameObject("DialogPanel");
-        dialogPanelGO.transform.SetParent(p, false);
-        dialogPanelImg = dialogPanelGO.AddComponent<Image>();
-        dialogPanelImg.color = new Color(0f, 0f, 0f, 0.85f);
-        RectTransform dprt = dialogPanelGO.GetComponent<RectTransform>();
-        dprt.anchorMin = new Vector2(0f, 0f);
-        dprt.anchorMax = new Vector2(1f, 0f);
-        dprt.pivot = new Vector2(0.5f, 0f);
-        dprt.anchoredPosition = new Vector2(0f, 0f);
-        dprt.sizeDelta = new Vector2(0f, 520f);
-        dialogSpeakerText = MakeText(dialogPanelGO.transform, "Speaker", new Vector2(0.5f,1f), new Vector2(0f,-40f), new Vector2(1000f,50f), TextAnchor.MiddleCenter, 36, "");
-        dialogSpeakerText.color = new Color(1f, 0.95f, 0.5f);
-        dialogBodyText = MakeText(dialogPanelGO.transform, "Body", new Vector2(0.5f,0.5f), Vector2.zero, new Vector2(1000f,300f), TextAnchor.MiddleCenter, 30, "");
-        dialogBodyText.color = Color.white;
-        dialogPanelGO.SetActive(false);
-    }
-
-    Image BuildSkillBtn(Transform parent, string n, Vector2 pos, Color tint, Sprite icon, out Image iconImg) {
-        GameObject g = new GameObject(n);
-        g.transform.SetParent(parent, false);
-        Image bg = g.AddComponent<Image>();
-        bg.color = tint;
-        RectTransform rt = g.GetComponent<RectTransform>();
-        rt.anchorMin = new Vector2(1f, 0f);
-        rt.anchorMax = new Vector2(1f, 0f);
-        rt.pivot = new Vector2(0.5f, 0.5f);
-        rt.anchoredPosition = pos;
-        rt.sizeDelta = new Vector2(200f, 200f);
-
-        GameObject iconGO = new GameObject("Icon");
-        iconGO.transform.SetParent(g.transform, false);
-        iconImg = iconGO.AddComponent<Image>();
-        iconImg.color = new Color(1f, 1f, 1f, 0.95f);
-        if (icon != null) iconImg.sprite = icon;
-        RectTransform irt = iconGO.GetComponent<RectTransform>();
-        irt.anchorMin = new Vector2(0.5f, 0.5f);
-        irt.anchorMax = new Vector2(0.5f, 0.5f);
-        irt.pivot = new Vector2(0.5f, 0.5f);
-        irt.anchoredPosition = Vector2.zero;
-        irt.sizeDelta = new Vector2(170f, 170f);
-        return bg;
-    }
-
-    Image MakeImage(Transform parent, string n, Vector2 aMin, Vector2 aMax, Vector2 pos, Vector2 size, Color c, out GameObject go) {
-        go = new GameObject(n);
+    Image MakeImage(Transform parent, string name, Color c)
+    {
+        var go = new GameObject(name);
         go.transform.SetParent(parent, false);
-        Image img = go.AddComponent<Image>();
-        img.color = c;
-        RectTransform rt = go.GetComponent<RectTransform>();
-        rt.anchorMin = aMin; rt.anchorMax = aMax;
-        rt.pivot = new Vector2(0f, 1f);
-        rt.anchoredPosition = pos;
-        rt.sizeDelta = size;
+        var img = go.AddComponent<Image>();
+        img.color = c; img.raycastTarget = false;
         return img;
     }
 
-    Text MakeText(Transform parent, string n, Vector2 anchor, Vector2 pos, Vector2 size, TextAnchor align, int fontSize, string content) {
-        GameObject go = new GameObject(n);
+    Text MakeText(Transform parent, string name, string content, int size, Color c)
+    {
+        var go = new GameObject(name);
         go.transform.SetParent(parent, false);
-        Text t = go.AddComponent<Text>();
-        t.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        var t = go.AddComponent<Text>();
         t.text = content;
-        t.fontSize = fontSize;
-        t.color = Color.white;
-        t.alignment = align;
-        RectTransform rt = t.rectTransform;
-        rt.anchorMin = anchor; rt.anchorMax = anchor;
-        rt.pivot = new Vector2(0.5f, 0.5f);
-        rt.anchoredPosition = pos;
-        rt.sizeDelta = size;
+        t.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        t.fontSize = size;
+        t.color = c;
+        t.alignment = TextAnchor.MiddleLeft;
+        t.horizontalOverflow = HorizontalWrapMode.Wrap;
+        t.verticalOverflow = VerticalWrapMode.Overflow;
+        t.raycastTarget = false;
         return t;
     }
 
-    void UpdateHUD(float dt) {
-        if (hpFillImg != null) {
-            float r = Mathf.Max(0f, playerHP/playerHPMax);
-            hpFillImg.rectTransform.sizeDelta = new Vector2(572f * r, 34f);
+    Button MakeButton(Transform parent, string name, string label, Vector2 anchoredPos, Vector2 size)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        var img = go.AddComponent<Image>();
+        img.color = new Color(0.12f,0.10f,0.18f,0.95f);
+        var rt = img.rectTransform;
+        rt.anchorMin = new Vector2(0.5f,0.5f); rt.anchorMax = new Vector2(0.5f,0.5f);
+        rt.anchoredPosition = anchoredPos; rt.sizeDelta = size;
+        var btn = go.AddComponent<Button>();
+        var cb = btn.colors;
+        cb.normalColor = new Color(0.18f,0.15f,0.25f,0.95f);
+        cb.highlightedColor = new Color(0.32f,0.25f,0.42f,1f);
+        cb.pressedColor = new Color(0.45f,0.32f,0.55f,1f);
+        btn.colors = cb;
+        AddOutline(go, new Color(0.9f,0.75f,0.3f,1f), 2);
+        var txt = MakeText(go.transform, "Label", label, 40, new Color(1f,0.95f,0.85f,1f));
+        Stretch(txt.rectTransform);
+        txt.alignment = TextAnchor.MiddleCenter;
+        return btn;
+    }
+
+    void AddOutline(GameObject go, Color c, int thickness)
+    {
+        var ol = go.AddComponent<Outline>();
+        ol.effectColor = c;
+        ol.effectDistance = new Vector2(thickness, -thickness);
+    }
+
+    void Stretch(RectTransform rt)
+    {
+        rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;
+        rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
+    }
+
+    // ============ SCRIPT (canon Episode 1) ============
+    void BuildScript()
+    {
+        script = new List<Line>();
+        // === ACT 1: Awakening ===
+        Add("", "bg_sarcophagus", "bgm_olympus", "sfx_transition",
+            "A thousand years of silence. Stone cracks. Dust falls. Something stirs in the dark.",
+            "Тысяча лет тишины. Камень трескается. Пыль осыпается. Что-то шевелится во тьме.");
+        Add("portrait_eon", "bg_sarcophagus", "", "",
+            "Eon: ...where... am I? My hammer... cold. My hands... mortal.",
+            "Эон: ...где... я? Молот... холодный. Руки... смертные.");
+        Add("portrait_eon", "bg_sarcophagus", "", "",
+            "Eon: I am Eon, last Titan of the Pact. I should not have woken. Olympus stands... yet I feel only ash.",
+            "Эон: Я Эон, последний Титан Пакта. Я не должен был проснуться. Олимп стоит... но я чую лишь пепел.");
+        Add("portrait_pythia", "bg_grove", "", "sfx_transition",
+            "Pythia: Titan. You hear me through the cracked stone. You woke because the gods are gone.",
+            "Пифия: Титан. Ты слышишь меня сквозь треснувший камень. Ты проснулся, потому что боги исчезли.");
+        Add("portrait_pythia", "bg_grove", "", "",
+            "Pythia: A thousand years past, Zeus fell. Hera screamed and was silenced. Olympus burned from within.",
+            "Пифия: Тысячу лет назад Зевс пал. Гера закричала и была заглушена. Олимп сгорел изнутри.");
+        Add("portrait_pythia", "bg_grove", "", "",
+            "Pythia: Now mortals are slaves to a Fallen one — Achilles the Elder, demigod turned tyrant. He wears black armor cracked with violet light.",
+            "Пифия: Теперь смертные — рабы Падшего. Ахилл Старший, полубог, ставший тираном. Он носит чёрные латы с фиолетовыми трещинами.");
+
+        // === ACT 2: First choice (cosmetic, leads to same hub) ===
+        AddChoice(
+            "Eon: Why me? I am a Titan. Why should I save mortals?",
+            "Эон: Почему я? Я Титан. Зачем мне спасать смертных?",
+            new []{"\"Because I swore the Pact.\"", "\"Because someone must.\"", "\"Because no god remains.\""},
+            new []{"«Потому что я дал клятву.»", "«Потому что кто-то должен.»", "«Потому что не осталось богов.»"});
+
+        Add("portrait_pythia", "bg_grove", "", "",
+            "Pythia: Your reason matters less than your steps. Walk to the Agora. Hermes waits — what remains of him.",
+            "Пифия: Твоя причина не так важна, как твои шаги. Иди на Агору. Гермес ждёт — то, что от него осталось.");
+
+        // === ACT 3: Agora ===
+        Add("", "bg_agora", "bgm_tense", "sfx_transition",
+            "The marketplace of Athens is ash and broken columns. Crows pick at bones. A figure leans on a cracked herald's staff.",
+            "Рынок Афин — пепел и сломанные колонны. Вороны клюют кости. Фигура опирается на треснувший жезл вестника.");
+        Add("portrait_hermes", "bg_agora", "", "",
+            "Hermes: Eon. You took your time. A thousand years late and still in last season's sandals.",
+            "Гермес: Эон. Не торопился. Опоздал на тысячу лет — да ещё в прошлогодних сандалиях.");
+        Add("portrait_hermes", "bg_agora", "", "",
+            "Hermes: I am all that's left of the messengers. The pantheon is meat for the Fallen. He devoured the divine spark of each god he killed.",
+            "Гермес: Я всё, что осталось от вестников. Пантеон — мясо для Падшего. Он пожрал божественную искру каждого убитого бога.");
+        Add("portrait_hermes", "bg_agora", "", "",
+            "Hermes: He sits on Olympus now. Not on a throne — on a pile of broken statues. Waiting. He knows you woke.",
+            "Гермес: Он сидит на Олимпе. Не на троне — на куче разбитых статуй. Ждёт. Он знает, что ты проснулся.");
+
+        // === ACT 4: Second choice ===
+        AddChoice(
+            "Hermes: So. What kind of Titan are you, sleeper?",
+            "Гермес: Так. Что ты за Титан, спящий?",
+            new []{"\"I am the Pact. I keep it.\"", "\"I am vengeance for the silent gods.\"", "\"I am the last weight on the scale.\""},
+            new []{"«Я — Пакт. Я храню его.»", "«Я — месть за умолкших богов.»", "«Я — последний вес на чаше весов.»"});
+
+        Add("portrait_hermes", "bg_agora", "", "",
+            "Hermes: Pretty words. The Fallen has prettier ones. He will tell you Olympus deserved to burn. Part of you will believe him.",
+            "Гермес: Красивые слова. У Падшего — красивее. Он скажет тебе, что Олимп заслужил гореть. И часть тебя поверит ему.");
+
+        // === ACT 5: Climb ===
+        Add("", "bg_storm", "bgm_tense", "sfx_transition",
+            "The climb to Olympus is broken stairs and lightning. The sky is bruised purple. The air tastes of iron.",
+            "Подъём на Олимп — сломанные ступени и молния. Небо синяком фиолетово. Воздух на вкус — железо.");
+        Add("portrait_eon", "bg_storm", "", "",
+            "Eon: I remember this storm. It was a hymn once. Now it screams.",
+            "Эон: Я помню эту бурю. Когда-то это был гимн. Теперь — крик.");
+
+        // === ACT 6: The Fallen ===
+        Add("", "bg_altar", "bgm_tense", "sfx_transition",
+            "The altar at the summit. Twelve broken statues in a circle. In the center — the Fallen, armor cracked with violet light. A god-hammer rests beside him. Yours.",
+            "Алтарь на вершине. Двенадцать разбитых статуй кругом. В центре — Падший, латы в фиолетовых трещинах. Молот-богов лежит рядом с ним. Твой.");
+        Add("portrait_fallen", "bg_altar", "", "",
+            "Fallen Hoplite: Titan. You wear flesh badly. Tell me — did you also dream of fire while you slept?",
+            "Падший Гоплит: Титан. Ты плохо носишь плоть. Скажи — ты тоже видел во сне огонь, пока спал?");
+        Add("portrait_fallen", "bg_altar", "", "",
+            "Fallen Hoplite: I was Achilles. Then I was a hero. Then I was a saint of a dead pantheon. Then I was nothing. Then I was everything.",
+            "Падший Гоплит: Я был Ахиллом. Потом героем. Потом святым мёртвого пантеона. Потом — ничем. Потом — всем.");
+        Add("portrait_fallen", "bg_altar", "", "",
+            "Fallen Hoplite: Zeus lied. Hera lied. Hermes —" + " he lies even now, leaning on a stick in the agora. I ate them. Their light is in me. It will be in you.",
+            "Падший Гоплит: Зевс лгал. Гера лгала. Гермес — лжёт даже сейчас, опираясь на палку на агоре. Я съел их. Их свет — во мне. Будет и в тебе.");
+
+        // === ACT 7: Final choice (single ending, choice is dialogue only) ===
+        AddChoice(
+            "Fallen Hoplite: Pick up the hammer. Strike me — or kneel. Either way the Pact ends tonight.",
+            "Падший Гоплит: Возьми молот. Бей меня — или склони колено. В любом случае Пакт кончится сегодня.",
+            new []{"\"I take the hammer. The Pact does not end.\"", "\"You ate gods. You will choke on a Titan.\"", "\"Olympus was hollow. But mortals are not.\""},
+            new []{"«Я беру молот. Пакт не кончится.»", "«Ты ел богов. Подавишься Титаном.»", "«Олимп был пуст. Но смертные — нет.»"});
+
+        // === Linear ending (all roads converge) ===
+        Add("portrait_eon", "bg_altar", "", "sfx_transition",
+            "Eon: I lift the hammer. It remembers me. It is heavier than I remembered. Or I am lighter.",
+            "Эон: Я поднимаю молот. Он помнит меня. Он тяжелее, чем я помнил. Или я — легче.");
+        Add("portrait_fallen", "bg_altar", "", "",
+            "Fallen Hoplite: Good. Strike. Strike well, Titan. I have wanted this for a thousand years.",
+            "Падший Гоплит: Хорошо. Бей. Бей чисто, Титан. Я ждал этого тысячу лет.");
+        Add("", "bg_altar", "", "sfx_blip",
+            "Lightning. Stone. A scream that is not pain but release. The violet light leaves him and rises — twelve sparks, free, scattering into the storm.",
+            "Молния. Камень. Крик — не боль, но освобождение. Фиолетовый свет покидает его и поднимается — двенадцать искр, свободные, рассеиваются в буре.");
+        Add("portrait_eon", "bg_storm", "bgm_olympus", "",
+            "Eon: The gods are not coming back. Not as they were. But the Pact remembers. And so do I.",
+            "Эон: Боги не вернутся. Не такими, как были. Но Пакт помнит. И я помню.");
+        Add("portrait_hermes", "bg_agora", "", "sfx_transition",
+            "Hermes: He's alive. He's actually alive. The mortals are loud about it. There is wine again. There is laughter.",
+            "Гермес: Он жив. Он правда жив. Смертные шумят. Снова есть вино. Снова есть смех.");
+        Add("portrait_pythia", "bg_grove", "", "",
+            "Pythia: Titan. Eon. The pantheon is shattered, but a Titan walks among mortals. That is not nothing.",
+            "Пифия: Титан. Эон. Пантеон разбит, но Титан ходит среди смертных. Это не «ничто».");
+        Add("portrait_eon", "bg_grove", "", "",
+            "Eon: Episode One ends. The Pact holds. The next ruin already waits.",
+            "Эон: Эпизод первый окончен. Пакт стоит. Следующая руина уже ждёт.");
+    }
+
+    void Add(string speaker, string bg, string bgm, string sfx, string en, string ru)
+    {
+        script.Add(new Line{ speaker=speaker, bg=bg, bgm=bgm, sfx=sfx, en=en, ru=ru, choices=null });
+    }
+    void AddChoice(string en, string ru, string[] enCh, string[] ruCh)
+    {
+        var c = new Choice[enCh.Length];
+        for (int i=0;i<enCh.Length;i++) c[i] = new Choice{ en=enCh[i], ru=ruCh[i] };
+        script.Add(new Line{ speaker="portrait_eon", bg="", bgm="", sfx="", en=en, ru=ru, choices=c });
+    }
+
+    // ============ TITLE / FLOW ============
+    void ShowTitle()
+    {
+        state = State.Title;
+        titlePanel.SetActive(true);
+        choicePanel.SetActive(false);
+        endPanel.SetActive(false);
+        if (sprites.ContainsKey("bg_title")) titleBg.sprite = sprites["bg_title"];
+        titleBg.color = Color.white;
+        portraitImage.color = new Color(1,1,1,0);
+        dialogBox.gameObject.SetActive(false);
+        PlayBgm("bgm_olympus");
+        UpdateLangButton();
+        fadeDir = -1;
+    }
+
+    void OnStartNew()
+    {
+        PlaySfx("sfx_choice");
+        idx = 0; SaveProgress();
+        BeginPlay();
+    }
+
+    void OnContinue()
+    {
+        PlaySfx("sfx_choice");
+        if (idx >= script.Count) idx = 0;
+        BeginPlay();
+    }
+
+    void OnToggleLang()
+    {
+        PlaySfx("sfx_choice");
+        lang = (lang == Lang.EN) ? Lang.RU : Lang.EN;
+        PlayerPrefs.SetInt("lang", (int)lang);
+        UpdateLangButton();
+        if (state == State.Playing) ShowCurrentLine();
+        if (state == State.Choice) ShowChoiceUI();
+    }
+
+    void UpdateLangButton()
+    {
+        if (langBtnText != null)
+            langBtnText.text = (lang == Lang.EN) ? "▶ ENGLISH | русский" : "▶ РУССКИЙ | english";
+    }
+
+    void BeginPlay()
+    {
+        titlePanel.SetActive(false);
+        dialogBox.gameObject.SetActive(true);
+        state = State.Playing;
+        ShowCurrentLine();
+    }
+
+    // ============ LINE PLAYBACK ============
+    void ShowCurrentLine()
+    {
+        if (idx >= script.Count) { EndStory(); return; }
+        var line = script[idx];
+
+        // Background
+        if (!string.IsNullOrEmpty(line.bg) && sprites.ContainsKey(line.bg))
+        {
+            bgImage.sprite = sprites[line.bg];
+            bgImage.color = Color.white;
         }
-        if (mpFillImg != null) {
-            float r = Mathf.Max(0f, playerMP/playerMPMax);
-            mpFillImg.rectTransform.sizeDelta = new Vector2(572f * r, 24f);
+        // Portrait
+        if (!string.IsNullOrEmpty(line.speaker) && sprites.ContainsKey(line.speaker))
+        {
+            portraitImage.sprite = sprites[line.speaker];
+            portraitImage.color = Color.white;
         }
-        if (damageFlashImg != null) {
-            float a = Mathf.Clamp(damageFlashTimer*1.8f, 0f, 0.5f);
-            damageFlashImg.color = new Color(1f, 0f, 0f, a);
+        else
+        {
+            portraitImage.color = new Color(1,1,1,0);
         }
-        if (slamBtnImg != null) {
-            float t = Mathf.Clamp01(skillFlashT[0]/0.35f);
-            slamBtnImg.color = Color.Lerp(new Color(0.7f,0.35f,0.10f,1f), Color.white, t);
-            if (slamIconImg != null) slamIconImg.color = skillCD[0]>0f ? new Color(0.4f,0.4f,0.4f,1f) : Color.white;
+        // BGM
+        if (!string.IsNullOrEmpty(line.bgm)) PlayBgm(line.bgm);
+        // SFX
+        if (!string.IsNullOrEmpty(line.sfx)) PlaySfx(line.sfx);
+
+        // Speaker label
+        speakerText.text = SpeakerLabel(line.speaker);
+
+        // Typewriter
+        fullText = (lang == Lang.EN) ? line.en : line.ru;
+        typeIdx = 0; typeTimer = 0f; typing = true;
+        dialogText.text = "";
+
+        // If this is a choice line, show choice UI after typewriter completes
+        if (line.choices != null) { /* handled in Update when typing finishes */ }
+        else { choicePanel.SetActive(false); }
+    }
+
+    string SpeakerLabel(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return (lang == Lang.EN) ? "" : "";
+        switch (id)
+        {
+            case "portrait_eon": return (lang == Lang.EN) ? "Eon" : "Эон";
+            case "portrait_pythia": return (lang == Lang.EN) ? "Pythia" : "Пифия";
+            case "portrait_hermes": return (lang == Lang.EN) ? "Hermes" : "Гермес";
+            case "portrait_fallen": return (lang == Lang.EN) ? "Fallen Hoplite" : "Падший Гоплит";
+            default: return "";
         }
-        if (infernoBtnImg != null) {
-            float t = Mathf.Clamp01(skillFlashT[1]/0.35f);
-            infernoBtnImg.color = Color.Lerp(new Color(0.75f,0.15f,0.10f,1f), Color.white, t);
-            if (infernoIconImg != null) infernoIconImg.color = skillCD[1]>0f ? new Color(0.4f,0.4f,0.4f,1f) : Color.white;
+    }
+
+    void ShowChoiceUI()
+    {
+        var line = script[idx];
+        if (line.choices == null) { choicePanel.SetActive(false); return; }
+        choicePanel.SetActive(true);
+        state = State.Choice;
+        for (int i=0;i<choiceButtons.Count;i++)
+        {
+            if (i < line.choices.Length)
+            {
+                choiceButtons[i].gameObject.SetActive(true);
+                var lbl = choiceButtons[i].GetComponentInChildren<Text>();
+                lbl.text = (lang == Lang.EN) ? line.choices[i].en : line.choices[i].ru;
+            }
+            else choiceButtons[i].gameObject.SetActive(false);
         }
-        if (aegisBtnImg != null) {
-            float t = Mathf.Clamp01(skillFlashT[2]/0.35f);
-            Color baseC = Q.unlockedAegis ? new Color(0.15f,0.40f,0.75f,1f) : new Color(0.2f,0.2f,0.2f,0.6f);
-            aegisBtnImg.color = Color.Lerp(baseC, Color.white, t);
-            if (aegisIconImg != null) {
-                if (!Q.unlockedAegis) aegisIconImg.color = new Color(0.3f,0.3f,0.3f,0.5f);
-                else aegisIconImg.color = skillCD[2]>0f ? new Color(0.4f,0.4f,0.4f,1f) : Color.white;
+    }
+
+    void OnTap()
+    {
+        if (state != State.Playing) return;
+        if (typing) { /* fast-forward */ typeIdx = fullText.Length; dialogText.text = fullText; typing = false; return; }
+        var line = script[idx];
+        if (line.choices != null) { ShowChoiceUI(); return; }
+        idx++;
+        SaveProgress();
+        if (idx >= script.Count) { EndStory(); return; }
+        ShowCurrentLine();
+    }
+
+    void OnChoicePicked(int which)
+    {
+        PlaySfx("sfx_choice");
+        // Single linear ending: choice is dialogue flavor only, story continues
+        choicePanel.SetActive(false);
+        state = State.Playing;
+        idx++;
+        SaveProgress();
+        if (idx >= script.Count) { EndStory(); return; }
+        ShowCurrentLine();
+    }
+
+    void EndStory()
+    {
+        state = State.Ended;
+        choicePanel.SetActive(false);
+        endPanel.SetActive(true);
+        PlayBgm("bgm_olympus");
+    }
+
+    void OnRestart()
+    {
+        PlaySfx("sfx_choice");
+        idx = 0; SaveProgress();
+        endPanel.SetActive(false);
+        ShowTitle();
+    }
+
+    // ============ SAVE / LOAD ============
+    void SaveProgress()
+    {
+        PlayerPrefs.SetInt("idx", idx);
+        PlayerPrefs.SetInt("lang", (int)lang);
+        PlayerPrefs.Save();
+    }
+    void LoadProgress()
+    {
+        idx = PlayerPrefs.GetInt("idx", 0);
+        lang = (Lang)PlayerPrefs.GetInt("lang", 0);
+    }
+
+    // ============ AUDIO ============
+    void PlayBgm(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return;
+        if (id == currentBgm && bgmSrc.isPlaying) return;
+        if (!clips.ContainsKey(id)) return;
+        bgmSrc.clip = clips[id];
+        bgmSrc.Play();
+        currentBgm = id;
+    }
+    void PlaySfx(string id)
+    {
+        if (string.IsNullOrEmpty(id) || !clips.ContainsKey(id)) return;
+        sfxSrc.PlayOneShot(clips[id]);
+    }
+
+    // ============ UPDATE ============
+    void Update()
+    {
+        // Fade
+        if (fadeDir != 0)
+        {
+            fadeAlpha += fadeDir * Time.deltaTime * 1.2f;
+            fadeAlpha = Mathf.Clamp01(fadeAlpha);
+            fadeOverlay.color = new Color(0,0,0,fadeAlpha);
+            if (fadeAlpha <= 0f || fadeAlpha >= 1f) fadeDir = 0;
+        }
+
+        // Typewriter
+        if (typing)
+        {
+            typeTimer += Time.deltaTime;
+            while (typeTimer >= TYPE_SPEED && typeIdx < fullText.Length)
+            {
+                typeTimer -= TYPE_SPEED;
+                typeIdx++;
+                dialogText.text = fullText.Substring(0, typeIdx);
+                // soft blip every 3rd char
+                if (typeIdx % 6 == 0) PlaySfx("sfx_blip");
+            }
+            if (typeIdx >= fullText.Length)
+            {
+                typing = false;
+                var line = script[idx];
+                if (line.choices != null) ShowChoiceUI();
             }
         }
-        if (actionTextT > 0f) {
-            actionTextT -= dt;
-            if (txtAction != null) {
-                txtAction.text = actionText;
-                txtAction.color = new Color(1f,0.95f,0.4f, Mathf.Clamp01(actionTextT));
-            }
-        } else if (txtAction != null) txtAction.text = "";
-
-        if (txtDiag != null)
-            txtDiag.text = "HP " + (int)playerHP + "  MP " + (int)playerMP;
     }
-
-    void ShowAction(string s) { actionText = s; actionTextT = 2.0f; }
-    void SetZoneName(string s) { if (txtZoneName != null) txtZoneName.text = s; }
-
-    void UpdateQuestLog() {
-        if (txtQuestLog == null) return;
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine("<b>QUEST: The Fallen Hoplite</b>");
-        sb.AppendLine((Q.talkedPythia ? "[x] " : "[ ] ") + "Hear Pythia's prophecy");
-        sb.AppendLine((Q.killedScoutsZ1>=2 ? "[x] " : "[ ] ") + "Slay 2 Scouts ("+Q.killedScoutsZ1+"/2)");
-        sb.AppendLine((Q.unlockedZone2 ? "[x] " : "[ ] ") + "Enter Broken Agora");
-        sb.AppendLine((Q.unlockedAegis ? "[x] " : "[ ] ") + "Receive Aegis from Hermes");
-        sb.AppendLine((Q.killedAgoraZ2>=4 ? "[x] " : "[ ] ") + "Defeat Agora guards ("+Q.killedAgoraZ2+"/4)");
-        sb.AppendLine((Q.bossDefeated ? "[x] " : "[ ] ") + "Defeat the Fallen Hoplite");
-        txtQuestLog.text = sb.ToString();
-    }
-
-    void ShowVictory() {
-        if (victoryOverlayImg != null) victoryOverlayImg.color = new Color(0.1f, 0.55f, 0.2f, 0.65f);
-        if (txtVictory != null) txtVictory.text = "AETHER ECHOES\n\nThe hammer awakens.\nThe Titan remembers.\n\nChapter 1 complete.\n\nTap to restart.";
-        state = State.Won;
-    }
-
-    void ShowDefeat() {
-        if (defeatOverlayImg != null) defeatOverlayImg.color = new Color(0.4f, 0.05f, 0.05f, 0.75f);
-        if (txtDefeat != null) txtDefeat.text = "DEFEAT\n\nThe gods laugh.\nTap to rise again.";
-        state = State.Lost;
-    }
-
-    void HideOverlays() {
-        if (victoryOverlayImg != null) victoryOverlayImg.color = new Color(0.1f, 0.55f, 0.2f, 0f);
-        if (defeatOverlayImg != null) defeatOverlayImg.color = new Color(0.4f, 0.05f, 0.05f, 0f);
-        if (txtVictory != null) txtVictory.text = "";
-        if (txtDefeat != null) txtDefeat.text = "";
-    }
-    #endregion
-
-    // ============================================================
-    #region Dialog
-    // ============================================================
-    void InitDialogScripts() {
-        dialogScript = new string[6][];
-        dialogScript[(int)DialogId.PythiaIntro] = new string[]{
-            "PYTHIA|Eon... the Titan awakens.\nI have waited a thousand years.",
-            "PYTHIA|The Hammer calls. You must reach the Altar of Echo.\nFirst, kill the scouts that guard this grove.",
-            "PYTHIA|Slam crushes those near you.\nInferno burns those before you.\nThe gods forgot fear. Remind them."
-        };
-        dialogScript[(int)DialogId.PythiaAfterScouts] = new string[]{
-            "PYTHIA|Well struck, Titan.\nA path now opens to the Broken Agora.",
-            "PYTHIA|Hermes waits there.\nHe alone among the gods did not betray your kind."
-        };
-        dialogScript[(int)DialogId.HermesIntro] = new string[]{
-            "HERMES|Eon. The grove still echoes with your footsteps.",
-            "HERMES|Zeus thinks he betrayed everyone.\nHe was wrong.",
-            "HERMES|Take the Aegis. It will shield you from the light of the false gods."
-        };
-        dialogScript[(int)DialogId.HermesGiveAegis] = new string[]{
-            "HERMES|Aegis is yours. Cast it when the Boss telegraphs his fury.",
-            "HERMES|Defeat the Agora guards. The path to the Altar lies beyond."
-        };
-        dialogScript[(int)DialogId.HermesBeforeBoss] = new string[]{
-            "HERMES|The Fallen Hoplite waits.\nHe does not remember who he was — Achilles the Elder, first of the demigods.",
-            "HERMES|Give him peace, Titan.\nThen the Hammer of Echo will be yours."
-        };
-    }
-
-    void StartDialog(DialogId id, System.Action onClose) {
-        activeDialog = id;
-        dialogLine = 0;
-        dialogTypeChar = 0;
-        dialogTypeT = 0f;
-        onDialogClose = onClose;
-        if (dialogPanelGO != null) dialogPanelGO.SetActive(true);
-        state = State.Dialog;
-        RefreshDialogLine();
-    }
-
-    void RefreshDialogLine() {
-        if (dialogScript == null || (int)activeDialog >= dialogScript.Length) return;
-        string[] lines = dialogScript[(int)activeDialog];
-        if (lines == null || dialogLine >= lines.Length) { CloseDialog(); return; }
-        string raw = lines[dialogLine];
-        int sep = raw.IndexOf('|');
-        string speaker = (sep > 0) ? raw.Substring(0, sep) : "";
-        if (dialogSpeakerText != null) dialogSpeakerText.text = speaker;
-        if (dialogBodyText != null) dialogBodyText.text = "";
-        dialogTypeChar = 0;
-        dialogTypeT = 0f;
-    }
-
-    void UpdateDialog(float dt) {
-        if (activeDialog == DialogId.None) return;
-        string[] lines = dialogScript[(int)activeDialog];
-        if (lines == null || dialogLine >= lines.Length) { CloseDialog(); return; }
-        string raw = lines[dialogLine];
-        int sep = raw.IndexOf('|');
-        string body = (sep > 0) ? raw.Substring(sep+1) : raw;
-
-        if (dialogTypeChar < body.Length) {
-            dialogTypeT += dt;
-            if (dialogTypeT > 0.025f) {
-                dialogTypeT = 0f;
-                dialogTypeChar++;
-                if (dialogBodyText != null) dialogBodyText.text = body.Substring(0, dialogTypeChar);
-            }
-        }
-
-        if (tappedDialogContinue && !dialogTouchPrev) {
-            if (dialogTypeChar < body.Length) {
-                dialogTypeChar = body.Length;
-                if (dialogBodyText != null) dialogBodyText.text = body;
-            } else {
-                dialogLine++;
-                if (dialogLine >= lines.Length) CloseDialog();
-                else RefreshDialogLine();
-            }
-        }
-        dialogTouchPrev = tappedDialogContinue;
-    }
-
-    void CloseDialog() {
-        if (dialogPanelGO != null) dialogPanelGO.SetActive(false);
-        DialogId prev = activeDialog;
-        activeDialog = DialogId.None;
-        state = State.InZone;
-
-        if (prev == DialogId.PythiaIntro) Q.talkedPythia = true;
-        if (prev == DialogId.HermesIntro) Q.talkedHermes = true;
-        if (prev == DialogId.HermesIntro && !Q.unlockedAegis) {
-            StartDialog(DialogId.HermesGiveAegis, () => {
-                Q.unlockedAegis = true;
-                ShowAction("Aegis unlocked!");
-                UpdateQuestLog();
-                SaveGame();
-            });
-            return;
-        }
-
-        UpdateQuestLog();
-        SaveGame();
-        if (onDialogClose != null) {
-            var cb = onDialogClose;
-            onDialogClose = null;
-            cb();
-        }
-    }
-    #endregion
-
-    // ============================================================
-    #region Quest / Transitions
-    // ============================================================
-    void CheckZoneTransitions() {
-        if (zoneTrigger == null || player == null) return;
-        if (Vector3.Distance(player.transform.position, zoneTrigger.transform.position) < 1.5f) {
-            if (currentZone == Zone.AwakeningGrove) EnterZone(Zone.BrokenAgora);
-            else if (currentZone == Zone.BrokenAgora) EnterZone(Zone.AltarArena);
-        }
-    }
-
-    void CheckNPCInteractions() {
-        if (player == null) return;
-        if (pythia != null && Vector3.Distance(player.transform.position, pythia.transform.position) < 2f) {
-            if (Q.killedScoutsZ1 >= 2 && !Q.unlockedZone2 && activeDialog == DialogId.None) {
-                StartDialog(DialogId.PythiaAfterScouts, () => {
-                    Q.unlockedZone2 = true;
-                    SpawnPortalToNextZone(new Vector3(0f, 8f, 0f));
-                    UpdateQuestLog();
-                    SaveGame();
-                });
-            }
-        }
-        if (hermes != null && Vector3.Distance(player.transform.position, hermes.transform.position) < 2f) {
-            if (!Q.talkedHermes && activeDialog == DialogId.None)
-                StartDialog(DialogId.HermesIntro, null);
-        }
-    }
-    #endregion
-
-    // ============================================================
-    #region Audio
-    // ============================================================
-    void SetupAudio() {
-        GameObject bgmGO = new GameObject("BGMSource");
-        bgmSource = bgmGO.AddComponent<AudioSource>();
-        bgmSource.loop = true;
-        bgmSource.volume = 0.5f;
-        bgmSource.spatialBlend = 0f;
-        if (clipBGM != null) { bgmSource.clip = clipBGM; bgmSource.Play(); }
-        GameObject sfxGO = new GameObject("SFXSource");
-        sfxSource = sfxGO.AddComponent<AudioSource>();
-        sfxSource.loop = false;
-        sfxSource.volume = 0.8f;
-        sfxSource.spatialBlend = 0f;
-    }
-
-    void PlaySfx(AudioClip c) {
-        if (sfxSource != null && c != null) sfxSource.PlayOneShot(c);
-    }
-    #endregion
-
-    // ============================================================
-    #region Game Loop
-    // ============================================================
-    void Update() {
-        float dt = Time.deltaTime;
-        ReadInput();
-
-        switch (state) {
-            case State.Boot:
-                state = State.InZone;
-                break;
-            case State.Dialog:
-                UpdateDialog(dt);
-                break;
-            case State.InZone:
-                if (tappedSlam)    TryCastSlam();
-                if (tappedInferno) TryCastInferno();
-                if (tappedAegis)   TryCastAegis();
-                UpdatePlayer(dt);
-                UpdateEnemies(dt);
-                UpdateBoss(dt);
-                UpdateVFX(dt);
-                CheckZoneTransitions();
-                CheckNPCInteractions();
-                break;
-            case State.Won:
-            case State.Lost:
-                UpdateVFX(dt);
-                if (tappedDialogContinue || tappedSlam || tappedInferno || tappedAegis) {
-                    if (state == State.Won) {
-                        ResetSave();
-                        HideOverlays();
-                        EnterZone(Zone.AwakeningGrove);
-                        state = State.InZone;
-                    } else {
-                        playerHP = playerHPMax;
-                        HideOverlays();
-                        EnterZone(currentZone);
-                        state = State.InZone;
-                    }
-                }
-                break;
-        }
-        UpdateHUD(dt);
-    }
-    #endregion
 }
