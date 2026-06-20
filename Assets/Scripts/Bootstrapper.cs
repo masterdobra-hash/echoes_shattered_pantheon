@@ -389,7 +389,7 @@ public class Bootstrapper : MonoBehaviour
         if (victory || defeat)
         {
             // Restart on any tap
-            if (Input.touchCount > 0 && Input.GetTouch(0).phase == 0 /*Began*/)
+            if (Input.touchCount > 0 && (int)Input.GetTouch(0).phase == 0 /*Began*/)
             {
                 RestartLevel();
             }
@@ -565,7 +565,7 @@ public class Bootstrapper : MonoBehaviour
             {
                 Touch t = Input.GetTouch(i);
                 Vector2 pos = t.position;
-                int phase = t.phase; // 0=Began,1=Moved,2=Stationary,3=Ended,4=Canceled
+                int phase = (int)t.phase; // 0=Began,1=Moved,2=Stationary,3=Ended,4=Canceled
 
                 if (phase == 0) // Began
                 {
