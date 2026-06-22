@@ -377,7 +377,7 @@ public class Bootstrapper : MonoBehaviour
         int[] gw = new []{6,6,6,7,7,7,7,7,8,8,8};
         int[] gh = new []{7,7,7,8,8,8,8,9,9,9,10};
         int[] cc = new []{4,4,5,5,5,5,5,5,6,6,6};
-        int[] hp = new []{60,80,90,120,140,160,180,200,220,260,500};
+        int[] hp = new []{80,100,120,140,160,180,200,220,240,280,500};
         string[] enemies = new []{
             "enemy_hoplite_corrupt","enemy_hoplite_corrupt","enemy_shadow_priestess",
             "enemy_hoplite_corrupt","enemy_shadow_priestess","enemy_hoplite_corrupt",
@@ -388,7 +388,7 @@ public class Bootstrapper : MonoBehaviour
         {
             b[i].id = i+1;
             b[i].gridW = gw[i]; b[i].gridH = gh[i]; b[i].colors = cc[i];
-            b[i].enemyHp = hp[i]; b[i].playerHp = 100 + i*5;
+            b[i].enemyHp = hp[i]; b[i].playerHp = 200 + i*5;
             b[i].enemyKey = enemies[i];
             b[i].arenaBgKey = "bg_battle_arena";
             b[i].isBoss = (i == 10);
@@ -514,7 +514,7 @@ public class Bootstrapper : MonoBehaviour
             b[i].gridH = Math.Min(10, gridStart + 1 + i/3);
             b[i].colors = Math.Min(6, 4 + i/3);
             b[i].enemyHp = 80 + i*30 + ep.id*20;
-            b[i].playerHp = 100 + i*5;
+            b[i].playerHp = 200 + i*5;
             b[i].enemyKey = (i < 7) ? "enemy_hoplite_corrupt" : (i < 10 ? "enemy_shadow_priestess" : "enemy_minotaur");
             b[i].arenaBgKey = ep.bgKey;
             b[i].isBoss = (i == 10);
@@ -576,6 +576,15 @@ public class Bootstrapper : MonoBehaviour
     Image vfxOverlay;
     string vfxAnim = "";
     float vfxT = 0f;
+
+    // v13: GemTween for swap/match/gravity animations (constraint 85)
+    class GemTween { public RectTransform rt; public Vector2 from; public Vector2 to; public float t; public float dur; public int kind; /*0=swap,1=fade,2=drop*/ public Image img; public bool done; }
+    List<GemTween> activeTweens = new List<GemTween>();
+    Image battlePlayerPortrait;
+    Image[] abilityRingBg = new Image[3];
+    Image[] abilityCdMask = new Image[3];
+    float[] abilityCdT = new float[3];
+    float[] abilityCdDur = new float[3];
 
     // Gem keys per slot color id 0..5 base + pantheon-exclusive index 6
     string[] BaseGemKeys = new []{ "gem_pact","gem_storm","gem_blood","gem_ash","gem_mortal","gem_violet" };
@@ -748,7 +757,7 @@ public class Bootstrapper : MonoBehaviour
             totalMatched += matchCount;
             // Trigger bonus drops on match-4+
             int bonusDrop = (maxRun >= 5) ? 3 : (maxRun >= 4 ? 1 : 0); // 3=color-bomb,1=line
-            int dmg = (int)(matchCount * 10 * comboMul);
+            int dmg = (int)(matchCount * 3 * comboMul);
             if (maxRun >= 4) { dmg = (int)(dmg * 1.5f); extraTurn = true; }
             // Apply damage
             ApplyDamage(isPlayer, dmg);
@@ -963,7 +972,16 @@ public class Bootstrapper : MonoBehaviour
 
     void BuildBattleUI(Episode ep)
     {
-        if (battlePanel != null) { battlePanel.SetActive(true); battleBg.sprite = sprites.ContainsKey(curBattle.arenaBgKey) ? sprites[curBattle.arenaBgKey] : null; if (sprites.ContainsKey(curBattle.enemyKey)) battleEnemyPortrait.sprite = sprites[curBattle.enemyKey]; battleTurnText.text = L("TURN_PLAYER"); return; }
+        if (battlePanel != null) {
+            battlePanel.SetActive(true);
+            battleBg.sprite = sprites.ContainsKey(curBattle.arenaBgKey) ? sprites[curBattle.arenaBgKey] : null;
+            if (sprites.ContainsKey(curBattle.enemyKey)) battleEnemyPortrait.sprite = sprites[curBattle.enemyKey];
+            if (battlePlayerPortrait != null && sprites.ContainsKey("portrait_eon")) battlePlayerPortrait.sprite = sprites["portrait_eon"];
+            battleTurnText.text = L("TURN_PLAYER");
+            for (int i=0;i<abilityCdT.Length;i++) { abilityCdT[i]=0f; abilityCdDur[i]=0f; if (abilityCdMask[i]!=null) abilityCdMask[i].fillAmount = 0f; }
+            activeTweens.Clear();
+            return;
+        }
     }
 
     void RefreshAbilityButtons()
@@ -1132,52 +1150,88 @@ public class Bootstrapper : MonoBehaviour
         battlePanel.transform.SetParent(canvas.transform, false);
         var btRT = battlePanel.AddComponent<RectTransform>(); Stretch(btRT);
         battleBg = MakeImage(battlePanel.transform, "BattleBg", Color.white); Stretch(battleBg.rectTransform); battleBg.color = new Color(0.4f,0.4f,0.4f,1f);
-        // Enemy strip top
-        var enemyStrip = MakeImage(battlePanel.transform, "EnemyStrip", new Color(0.05f,0.04f,0.08f,0.78f));
+        // v13: Enemy strip top — large portrait 380x500 (constraint 88)
+        var enemyStrip = MakeImage(battlePanel.transform, "EnemyStrip", new Color(0.05f,0.04f,0.08f,0.0f));
         var esRT = enemyStrip.rectTransform; esRT.anchorMin = new Vector2(0,1); esRT.anchorMax = new Vector2(1,1); esRT.pivot = new Vector2(0.5f,1);
-        esRT.anchoredPosition = new Vector2(0,-20); esRT.sizeDelta = new Vector2(-40, 280);
+        esRT.anchoredPosition = new Vector2(0,-20); esRT.sizeDelta = new Vector2(-40, 520);
         battleEnemyPortrait = MakeImage(enemyStrip.transform, "EnemyPort", Color.white);
         var epRT = battleEnemyPortrait.rectTransform;
-        epRT.anchorMin = new Vector2(0,0); epRT.anchorMax = new Vector2(0,1); epRT.pivot = new Vector2(0,0.5f);
-        epRT.anchoredPosition = new Vector2(20,0); epRT.sizeDelta = new Vector2(220, -40);
+        epRT.anchorMin = new Vector2(0,1); epRT.anchorMax = new Vector2(0,1); epRT.pivot = new Vector2(0,1);
+        epRT.anchoredPosition = new Vector2(10,-10); epRT.sizeDelta = new Vector2(380, 500);
         battleEnemyPortrait.preserveAspect = true;
-        var ehpBg = MakeImage(enemyStrip.transform, "EHpBg", new Color(0.2f,0.05f,0.05f,1));
-        var ehbRT = ehpBg.rectTransform; ehbRT.anchorMin = new Vector2(0,0.5f); ehbRT.anchorMax = new Vector2(1,0.5f); ehbRT.pivot = new Vector2(0,0.5f);
-        ehbRT.anchoredPosition = new Vector2(260,0); ehbRT.sizeDelta = new Vector2(-280, 50);
-        enemyHpBar = MakeImage(ehpBg.transform, "EHpFill", new Color(0.85f,0.2f,0.2f,1));
+        AddOutline(battleEnemyPortrait.gameObject, new Color(0.9f,0.3f,0.3f,0.9f), 3);
+        // Enemy HP bar to the right of large portrait
+        var ehpBg = MakeImage(enemyStrip.transform, "EHpBg", new Color(0.2f,0.05f,0.05f,0.95f));
+        var ehbRT = ehpBg.rectTransform; ehbRT.anchorMin = new Vector2(0,1); ehbRT.anchorMax = new Vector2(0,1); ehbRT.pivot = new Vector2(0,1);
+        ehbRT.anchoredPosition = new Vector2(410,-40); ehbRT.sizeDelta = new Vector2(560, 60);
+        AddOutline(ehpBg.gameObject, new Color(0.9f,0.3f,0.3f,1f), 2);
+        enemyHpBar = MakeImage(ehpBg.transform, "EHpFill", new Color(0.85f,0.18f,0.18f,1));
         Stretch(enemyHpBar.rectTransform); enemyHpBar.fillAmount = 1f;
-        battleEnemyHpText = MakeText(ehpBg.transform, "EHpTxt", "100/100", 32, Color.white); Stretch(battleEnemyHpText.rectTransform); battleEnemyHpText.alignment = TextAnchor.MiddleCenter;
-        // Player strip bottom
-        var playerStrip = MakeImage(battlePanel.transform, "PlayerStrip", new Color(0.05f,0.04f,0.08f,0.78f));
+        battleEnemyHpText = MakeText(ehpBg.transform, "EHpTxt", "100/100", 30, Color.white); Stretch(battleEnemyHpText.rectTransform); battleEnemyHpText.alignment = TextAnchor.MiddleCenter; battleEnemyHpText.fontStyle = FontStyle.Bold;
+        // v13: Player strip bottom — large portrait 280x360 (constraint 88)
+        var playerStrip = MakeImage(battlePanel.transform, "PlayerStrip", new Color(0.05f,0.04f,0.08f,0.0f));
         var psRT = playerStrip.rectTransform; psRT.anchorMin = new Vector2(0,0); psRT.anchorMax = new Vector2(1,0); psRT.pivot = new Vector2(0.5f,0);
-        psRT.anchoredPosition = new Vector2(0,20); psRT.sizeDelta = new Vector2(-40, 60);
-        var phpBg = MakeImage(playerStrip.transform, "PHpBg", new Color(0.05f,0.2f,0.05f,1));
-        var phbRT = phpBg.rectTransform; Stretch(phbRT);
+        psRT.anchoredPosition = new Vector2(0,20); psRT.sizeDelta = new Vector2(-40, 380);
+        battlePlayerPortrait = MakeImage(playerStrip.transform, "PlayerPort", Color.white);
+        var ppRT = battlePlayerPortrait.rectTransform;
+        ppRT.anchorMin = new Vector2(0,0); ppRT.anchorMax = new Vector2(0,0); ppRT.pivot = new Vector2(0,0);
+        ppRT.anchoredPosition = new Vector2(10,10); ppRT.sizeDelta = new Vector2(280, 360);
+        battlePlayerPortrait.preserveAspect = true;
+        AddOutline(battlePlayerPortrait.gameObject, new Color(0.3f,0.85f,0.5f,0.9f), 3);
+        // Player HP bar to the right of large hero portrait
+        var phpBg = MakeImage(playerStrip.transform, "PHpBg", new Color(0.05f,0.2f,0.05f,0.95f));
+        var phbRT = phpBg.rectTransform; phbRT.anchorMin = new Vector2(0,0); phbRT.anchorMax = new Vector2(0,0); phbRT.pivot = new Vector2(0,0);
+        phbRT.anchoredPosition = new Vector2(310,300); phbRT.sizeDelta = new Vector2(540, 60);
+        AddOutline(phpBg.gameObject, new Color(0.3f,0.85f,0.5f,1f), 2);
         playerHpBar = MakeImage(phpBg.transform, "PHpFill", new Color(0.3f,0.85f,0.3f,1));
         Stretch(playerHpBar.rectTransform); playerHpBar.fillAmount = 1f;
-        battlePlayerHpText = MakeText(phpBg.transform, "PHpTxt", "100/100", 32, Color.white); Stretch(battlePlayerHpText.rectTransform); battlePlayerHpText.alignment = TextAnchor.MiddleCenter;
+        battlePlayerHpText = MakeText(phpBg.transform, "PHpTxt", "100/100", 30, Color.white); Stretch(battlePlayerHpText.rectTransform); battlePlayerHpText.alignment = TextAnchor.MiddleCenter; battlePlayerHpText.fontStyle = FontStyle.Bold;
         // Turn label
         battleTurnText = MakeText(battlePanel.transform, "Turn", "", 46, new Color(1f,0.9f,0.5f,1f));
         var ttuRT = battleTurnText.rectTransform; ttuRT.anchorMin = new Vector2(0.5f,1); ttuRT.anchorMax = new Vector2(0.5f,1); ttuRT.pivot = new Vector2(0.5f,1);
         ttuRT.anchoredPosition = new Vector2(0,-330); ttuRT.sizeDelta = new Vector2(700,80);
         battleTurnText.alignment = TextAnchor.MiddleCenter; battleTurnText.fontStyle = FontStyle.Bold;
         AddOutline(battleTurnText.gameObject, new Color(0,0,0,1), 3);
-        // Ability buttons right side (5 buttons stacked)
-        for (int i=0;i<5;i++)
+        // v13: Circular ability icons with VFX sprite + cooldown overlay (constraint 89)
+        string[] vfxKeys = new []{ "vfx_inferno_burst", "vfx_freeze", "vfx_titan_slam" };
+        Color[] ringTints = new []{ new Color(1f,0.45f,0.15f,1f), new Color(0.5f,0.85f,1f,1f), new Color(1f,0.9f,0.3f,1f) };
+        for (int i=0;i<3;i++)
         {
             int captured = i;
-            var abGo = new GameObject("AbilBtn"+i);
-            abGo.transform.SetParent(battlePanel.transform, false);
-            var abImg = abGo.AddComponent<Image>(); abImg.color = new Color(0.15f,0.10f,0.20f,0.95f);
-            var abRT = abImg.rectTransform;
-            abRT.anchorMin = new Vector2(1,0.5f); abRT.anchorMax = new Vector2(1,0.5f); abRT.pivot = new Vector2(1,0.5f);
-            abRT.anchoredPosition = new Vector2(-10, 360 - i*150); abRT.sizeDelta = new Vector2(180, 130);
-            AddOutline(abGo, new Color(0.9f,0.75f,0.3f,1f), 2);
-            var abBtn = abGo.AddComponent<Button>();
+            // Ring background (circle outline tinted)
+            var ringGo = new GameObject("AbilRing"+i);
+            ringGo.transform.SetParent(battlePanel.transform, false);
+            var ringImg = ringGo.AddComponent<Image>(); ringImg.color = new Color(0.10f,0.08f,0.15f,0.95f);
+            var ringRT = ringImg.rectTransform;
+            ringRT.anchorMin = new Vector2(1,0.5f); ringRT.anchorMax = new Vector2(1,0.5f); ringRT.pivot = new Vector2(1,0.5f);
+            ringRT.anchoredPosition = new Vector2(-20, 200 - i*180); ringRT.sizeDelta = new Vector2(150, 150);
+            AddOutline(ringGo, ringTints[i], 4);
+            abilityRingBg[i] = ringImg;
+            // Inner VFX icon
+            var iconGo = new GameObject("AbilIcon"+i);
+            iconGo.transform.SetParent(ringGo.transform, false);
+            var iconImg = iconGo.AddComponent<Image>();
+            if (sprites.ContainsKey(vfxKeys[i])) iconImg.sprite = sprites[vfxKeys[i]];
+            iconImg.color = Color.white; iconImg.preserveAspect = true; iconImg.raycastTarget = false;
+            var iRT = iconImg.rectTransform; iRT.anchorMin = new Vector2(0,0); iRT.anchorMax = new Vector2(1,1); iRT.pivot = new Vector2(0.5f,0.5f);
+            iRT.offsetMin = new Vector2(10,10); iRT.offsetMax = new Vector2(-10,-10);
+            // Cooldown radial mask
+            var cdGo = new GameObject("AbilCd"+i);
+            cdGo.transform.SetParent(ringGo.transform, false);
+            var cdImg = cdGo.AddComponent<Image>(); cdImg.color = new Color(0,0,0,0.65f); cdImg.raycastTarget = false;
+            cdImg.type = Image.Type.Filled; cdImg.fillAmount = 0f;
+            var cdRT = cdImg.rectTransform; cdRT.anchorMin = Vector2.zero; cdRT.anchorMax = Vector2.one; cdRT.offsetMin = Vector2.zero; cdRT.offsetMax = Vector2.zero;
+            abilityCdMask[i] = cdImg;
+            // Tap button
+            var abBtn = ringGo.AddComponent<Button>();
             abBtn.onClick.AddListener(() => UseAbility(captured));
-            var abTxt = MakeText(abGo.transform, "Lbl", "", 22, new Color(1f,0.95f,0.85f,1f));
-            Stretch(abTxt.rectTransform); abTxt.alignment = TextAnchor.MiddleCenter; abTxt.fontStyle = FontStyle.Bold;
-            abilityButtonsGO.Add(abGo);
+            // Cost badge bottom
+            var abTxt = MakeText(ringGo.transform, "Cost", "", 22, new Color(1f,0.95f,0.85f,1f));
+            var atRT = abTxt.rectTransform; atRT.anchorMin = new Vector2(0,0); atRT.anchorMax = new Vector2(1,0); atRT.pivot = new Vector2(0.5f,0);
+            atRT.anchoredPosition = new Vector2(0,-26); atRT.sizeDelta = new Vector2(0,40);
+            abTxt.alignment = TextAnchor.MiddleCenter; abTxt.fontStyle = FontStyle.Bold;
+            AddOutline(abTxt.gameObject, new Color(0,0,0,1), 2);
+            abilityButtonsGO.Add(ringGo);
             abilityButtonsText.Add(abTxt);
         }
         // VFX overlay
@@ -1605,6 +1659,35 @@ public class Bootstrapper : MonoBehaviour
             float a = Mathf.Clamp01(1f - vfxT / 0.9f);
             vfxOverlay.color = new Color(1,1,1,a);
             if (vfxT >= 0.9f) { vfxAnim = ""; vfxOverlay.color = new Color(1,1,1,0); }
+        }
+        // v13: GemTween updates (swap 0.25s, fade 0.3s, drop 0.4s)
+        if (state == State.Battle && activeTweens.Count > 0)
+        {
+            for (int i = activeTweens.Count - 1; i >= 0; i--)
+            {
+                var tw = activeTweens[i];
+                tw.t += Time.deltaTime;
+                float a = Mathf.Clamp01(tw.t / Mathf.Max(0.0001f, tw.dur));
+                float ease = a*a*(3f-2f*a);
+                if (tw.kind == 0 || tw.kind == 2) {
+                    if (tw.rt != null) tw.rt.anchoredPosition = tw.from + (tw.to - tw.from) * ease;
+                } else if (tw.kind == 1) {
+                    if (tw.img != null) tw.img.color = new Color(tw.img.color.r, tw.img.color.g, tw.img.color.b, 1f - a);
+                }
+                if (a >= 1f) { tw.done = true; activeTweens.RemoveAt(i); }
+            }
+        }
+        // v13: cooldown decay
+        if (state == State.Battle)
+        {
+            for (int i=0;i<abilityCdT.Length;i++)
+            {
+                if (abilityCdT[i] > 0f) {
+                    abilityCdT[i] -= Time.deltaTime;
+                    if (abilityCdT[i] < 0f) abilityCdT[i] = 0f;
+                    if (abilityCdMask[i] != null && abilityCdDur[i] > 0f) abilityCdMask[i].fillAmount = abilityCdT[i] / abilityCdDur[i];
+                } else if (abilityCdMask[i] != null) abilityCdMask[i].fillAmount = 0f;
+            }
         }
         if (state == State.Battle) RefreshAbilityButtons();
     }
