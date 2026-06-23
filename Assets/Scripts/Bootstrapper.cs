@@ -133,7 +133,30 @@ public class Bootstrapper : MonoBehaviour
     }
 
     // ============ LOC ============
+    // v14: localization keys for intents/enemy skills/bonuses
+    string L14(string key)
+    {
+        bool ru = (lang == Lang.RU);
+        switch (key)
+        {
+            case "INTENT":           return ru ? "Намерение" : "Intent";
+            case "ENS_PIERCE":       return ru ? "Пронзить" : "Pierce";
+            case "ENS_CURSE":        return ru ? "Проклятие" : "Curse";
+            case "ENS_PACT_BLAST":   return ru ? "Взрыв Договора" : "Pact Blast";
+            case "ENS_CURSE_STORM":  return ru ? "Буря Проклятий" : "Curse Storm";
+            case "ENS_TITAN_WRATH":  return ru ? "Ярость Титана" : "Titan Wrath";
+            case "BONUS_HERMES":     return ru ? "Поступь Гермеса" : "Hermes Step";
+            case "BONUS_HEPHAESTUS": return ru ? "Молот Гефеста" : "Hephaestus Hammer";
+            case "BONUS_ZEUS":       return ru ? "Молния Зевса" : "Zeus Lightning";
+        }
+        return "";
+    }
     string L(string key)
+    {
+        string v14r = L14(key); if (v14r.Length > 0) return v14r;
+        return L_(key);
+    }
+    string L_(string key)
     {
         bool en = (lang == Lang.EN);
         switch (key)
@@ -377,7 +400,7 @@ public class Bootstrapper : MonoBehaviour
         int[] gw = new []{6,6,6,7,7,7,7,7,8,8,8};
         int[] gh = new []{7,7,7,8,8,8,8,9,9,9,10};
         int[] cc = new []{4,4,5,5,5,5,5,5,6,6,6};
-        int[] hp = new []{80,100,120,140,160,180,200,220,240,280,500};
+        int[] hp = new []{128,160,192,224,256,288,320,352,384,448,800};
         string[] enemies = new []{
             "enemy_hoplite_corrupt","enemy_hoplite_corrupt","enemy_shadow_priestess",
             "enemy_hoplite_corrupt","enemy_shadow_priestess","enemy_hoplite_corrupt",
@@ -388,7 +411,7 @@ public class Bootstrapper : MonoBehaviour
         {
             b[i].id = i+1;
             b[i].gridW = gw[i]; b[i].gridH = gh[i]; b[i].colors = cc[i];
-            b[i].enemyHp = hp[i]; b[i].playerHp = 200 + i*5;
+            b[i].enemyHp = hp[i]; b[i].playerHp = 280 + i*15;
             b[i].enemyKey = enemies[i];
             b[i].arenaBgKey = "bg_battle_arena";
             b[i].isBoss = (i == 10);
@@ -513,8 +536,8 @@ public class Bootstrapper : MonoBehaviour
             b[i].gridW = Math.Min(8, gridStart + i/4);
             b[i].gridH = Math.Min(10, gridStart + 1 + i/3);
             b[i].colors = Math.Min(6, 4 + i/3);
-            b[i].enemyHp = 80 + i*30 + ep.id*20;
-            b[i].playerHp = 200 + i*5;
+            b[i].enemyHp = (int)((80 + i*30 + ep.id*20) * 1.6f);
+            b[i].playerHp = 280 + i*15;
             b[i].enemyKey = (i < 7) ? "enemy_hoplite_corrupt" : (i < 10 ? "enemy_shadow_priestess" : "enemy_minotaur");
             b[i].arenaBgKey = ep.bgKey;
             b[i].isBoss = (i == 10);
@@ -555,7 +578,7 @@ public class Bootstrapper : MonoBehaviour
     // =====================================================================
     // PART 2 — Match-3 engine, Battle UI, Abilities
     // =====================================================================
-    class Cell { public int color; public int bonus; /*0=none,1=line-h,2=line-v,3=color-bomb,4=cross*/ public bool curse; }
+    class Cell { public int color; public int bonus; /*0=none,1=line-h,2=line-v,3=square6,4=color-bomb*/ public bool curse; }
     Cell[,] grid; int gridW, gridH, gridColors;
     Image[,] gemImages;
     GameObject[,] gemGO;
@@ -577,14 +600,25 @@ public class Bootstrapper : MonoBehaviour
     string vfxAnim = "";
     float vfxT = 0f;
 
-    // v13: GemTween for swap/match/gravity animations (constraint 85)
-    class GemTween { public RectTransform rt; public Vector2 from; public Vector2 to; public float t; public float dur; public int kind; /*0=swap,1=fade,2=drop*/ public Image img; public bool done; }
+    // v13/v14: GemTween + destroy VFX + enemy intents (constraints 85,99,100,105,107)
+    class GemTween { public RectTransform rt; public Vector2 from; public Vector2 to; public float t; public float dur; public int kind; /*0=swap,1=fade,2=drop,3=destroyVfx*/ public Image img; public bool done; }
     List<GemTween> activeTweens = new List<GemTween>();
     Image battlePlayerPortrait;
-    Image[] abilityRingBg = new Image[3];
-    Image[] abilityCdMask = new Image[3];
-    float[] abilityCdT = new float[3];
-    float[] abilityCdDur = new float[3];
+    Image[] abilityRingBg = new Image[5];
+    Image[] abilityCdMask = new Image[5];
+    float[] abilityCdT = new float[5];
+    float[] abilityCdDur = new float[5];
+    // v14: enemy skill icons + intent label
+    Image[] enemySkillIcons = new Image[3];
+    Text[] enemySkillCdText = new Text[3];
+    int[] enemySkillCd = new int[3];
+    Text enemyIntentText;
+    // v14: swipe gesture state
+    Vector2 swipeStartPos = Vector2.zero; int swipeStartX = -1, swipeStartY = -1; bool swipeActive = false;
+    // v14: bonus piece types (constraints 101-103)
+    const int BONUS_NONE = 0, BONUS_LINE_H = 1, BONUS_LINE_V = 2, BONUS_SQUARE6 = 3, BONUS_COLOR_BOMB = 4;
+    // v14: destroy VFX overlay sprites keyed by color id
+    string[] DestroyVfxKeys = new []{ "vfx_destroy_pact","vfx_destroy_storm","vfx_destroy_blood","vfx_destroy_ash","vfx_destroy_mortal","vfx_destroy_violet" };
 
     // Gem keys per slot color id 0..5 base + pantheon-exclusive index 6
     string[] BaseGemKeys = new []{ "gem_pact","gem_storm","gem_blood","gem_ash","gem_mortal","gem_violet" };
@@ -659,18 +693,24 @@ public class Bootstrapper : MonoBehaviour
     }
 
     GameObject gridRoot;
+    RectTransform boardPanelRT;
+    float curCellSz = 80f;
     void BuildGridGOs()
     {
         if (gridRoot != null) UnityEngine.Object.Destroy(gridRoot);
         gridRoot = new GameObject("GridRoot");
-        gridRoot.transform.SetParent(battlePanel.transform, false);
+        // v14: parent under BoardPanel (safe zone) — constraint 97
+        gridRoot.transform.SetParent(boardPanelRT != null ? boardPanelRT.transform : (Transform)battlePanel.transform, false);
         var rt = gridRoot.AddComponent<RectTransform>();
-        rt.anchorMin = new Vector2(0.5f,0); rt.anchorMax = new Vector2(0.5f,0);
-        rt.pivot = new Vector2(0.5f,0); rt.anchoredPosition = new Vector2(0, 90);
-        // Cell size scales with grid
-        float maxW = 1000f;
-        float maxH = 1100f;
+        rt.anchorMin = new Vector2(0.5f,0.5f); rt.anchorMax = new Vector2(0.5f,0.5f);
+        rt.pivot = new Vector2(0.5f,0.5f); rt.anchoredPosition = new Vector2(0, 0);
+        // Cell size scales with available board area
+        float maxW = (boardPanelRT != null) ? Mathf.Max(400f, boardPanelRT.rect.width - 30f) : 1000f;
+        float maxH = (boardPanelRT != null) ? Mathf.Max(400f, boardPanelRT.rect.height - 30f) : 1100f;
+        if (maxW <= 100f) maxW = 1000f;
+        if (maxH <= 100f) maxH = 1100f;
         float cellSz = Math.Min(maxW / gridW, maxH / gridH);
+        curCellSz = cellSz;
         rt.sizeDelta = new Vector2(cellSz*gridW + 20, cellSz*gridH + 20);
         for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++)
         {
@@ -687,10 +727,48 @@ public class Bootstrapper : MonoBehaviour
             var btn = go.AddComponent<Button>();
             btn.transition = Selectable.Transition.None;
             btn.onClick.AddListener(() => OnGemTap(cx, cy));
+            // v14: swipe gesture handler via EventTrigger-style — attach drag handler component
+            // v14: swipe via GemDragHandler attached below (added after Button)
+            GemDragHandler dh = go.AddComponent<GemDragHandler>(); dh.Init(this, cx, cy);
             gemImages[x,y] = img;
             gemGO[x,y] = go;
         }
     }
+
+    // v14: swipe handler dispatched from GemDragHandler
+    public void OnGemSwipe(int x, int y, int dx, int dy)
+    {
+        if (state != State.Battle || battleResolving) return;
+        if (turnSide != 0) return;
+        if (activeTweens.Count > 0) return;
+        int tx = x + dx, ty = y + dy;
+        if (tx < 0 || tx >= gridW || ty < 0 || ty >= gridH) return;
+        selX = x; selY = y;
+        // Animate swap visually
+        if (gemImages[x,y] != null && gemImages[tx,ty] != null)
+        {
+            var rt1 = gemImages[x,y].rectTransform; var rt2 = gemImages[tx,ty].rectTransform;
+            activeTweens.Add(new GemTween{ rt = rt1, from = rt1.anchoredPosition, to = rt2.anchoredPosition, t=0, dur=0.25f, kind=0 });
+            activeTweens.Add(new GemTween{ rt = rt2, from = rt2.anchoredPosition, to = rt1.anchoredPosition, t=0, dur=0.25f, kind=0 });
+        }
+        SwapCells(x, y, tx, ty);
+        int matched = FindAndResolveMatches(true);
+        if (matched == 0)
+        {
+            // revert visually + logically
+            if (gemImages[x,y] != null && gemImages[tx,ty] != null)
+            {
+                var rt1 = gemImages[x,y].rectTransform; var rt2 = gemImages[tx,ty].rectTransform;
+                activeTweens.Add(new GemTween{ rt = rt1, from = rt1.anchoredPosition, to = rt2.anchoredPosition, t=0, dur=0.25f, kind=0 });
+                activeTweens.Add(new GemTween{ rt = rt2, from = rt2.anchoredPosition, to = rt1.anchoredPosition, t=0, dur=0.25f, kind=0 });
+            }
+            SwapCells(x, y, tx, ty);
+            selX = -1; selY = -1; RenderGrid();
+        }
+        else { selX = -1; selY = -1; AfterPlayerSwap(); }
+    }
+
+    public void OnBattleMenu() { if (settingsPanel != null) { settingsPanel.SetActive(true); } }
 
     void OnGemTap(int x, int y)
     {
@@ -757,7 +835,7 @@ public class Bootstrapper : MonoBehaviour
             totalMatched += matchCount;
             // Trigger bonus drops on match-4+
             int bonusDrop = (maxRun >= 5) ? 3 : (maxRun >= 4 ? 1 : 0); // 3=color-bomb,1=line
-            int dmg = (int)(matchCount * 3 * comboMul);
+            int dmg = (int)(matchCount * 2 * comboMul);
             if (maxRun >= 4) { dmg = (int)(dmg * 1.5f); extraTurn = true; }
             // Apply damage
             ApplyDamage(isPlayer, dmg);
@@ -787,6 +865,23 @@ public class Bootstrapper : MonoBehaviour
             }
         }
     }
+    // v14: spawn destroy VFX per gem type (constraint 100)
+    void SpawnDestroyVfx(int x, int y, int color)
+    {
+        if (gridRoot == null) return;
+        var go = new GameObject("VfxD"+x+"_"+y);
+        go.transform.SetParent(gridRoot.transform, false);
+        var img = go.AddComponent<Image>(); img.raycastTarget = false; img.preserveAspect = true;
+        string key = (color >= 0 && color < DestroyVfxKeys.Length) ? DestroyVfxKeys[color] : DestroyVfxKeys[0];
+        if (sprites.ContainsKey(key)) img.sprite = sprites[key];
+        img.color = new Color(1f,1f,1f,1f);
+        var rt = img.rectTransform;
+        rt.anchorMin = new Vector2(0,1); rt.anchorMax = new Vector2(0,1); rt.pivot = new Vector2(0.5f,0.5f);
+        rt.sizeDelta = new Vector2(curCellSz*1.4f, curCellSz*1.4f);
+        rt.anchoredPosition = new Vector2(x*curCellSz + curCellSz/2 + 10, -(y*curCellSz + curCellSz/2 + 10));
+        activeTweens.Add(new GemTween{ rt = rt, from = rt.anchoredPosition, to = rt.anchoredPosition, t=0, dur=0.45f, kind=1, img = img });
+    }
+
     void Refill()
     {
         System.Random rng = new System.Random();
@@ -807,23 +902,49 @@ public class Bootstrapper : MonoBehaviour
         if (extraTurn) { extraTurn = false; battleTurnText.text = L("EXTRA_TURN"); return; }
         turnCount++;
         if (turnCount >= 2) { turnCount = 0; turnSide = 1; battleTurnText.text = L("TURN_ENEMY"); ScheduleEnemyTurn(); }
-        else battleTurnText.text = L("TURN_PLAYER");
+        else { UpdateEnemyIntent(); battleTurnText.text = L("TURN_PLAYER"); }
     }
 
     float enemyDelay = 0f;
-    void ScheduleEnemyTurn() { enemyDelay = 0.9f; battleResolving = true; }
+    void ScheduleEnemyTurn() { enemyDelay = 1.2f; battleResolving = true; UpdateEnemyIntent(); }
+
+    // v14: enemy AI with 1/2/3 skills + intent display (constraints 105, 107)
+    int[] enemySkillNext = new int[]{ 0, 1, 2 };
+    int enemyNextSkillIdx = 0;
+    int EnemySkillCount(BattleConfig b) { if (b.isBoss) return 3; if (b.id >= 6) return 2; return 1; }
+    string[] EnemySkillKey(BattleConfig b)
+    {
+        // Returns 3 keys per slot; unused slots = ""
+        if (b.isBoss) return new []{ "pact_blast", "curse_storm", "titan_wrath" };
+        if (b.id >= 6) return new []{ "pierce", "curse" };
+        return new []{ "pierce" };
+    }
+    void UpdateEnemyIntent()
+    {
+        if (enemyIntentText == null || curBattle == null) return;
+        var keys = EnemySkillKey(curBattle);
+        int n = EnemySkillCount(curBattle);
+        int idx = enemyNextSkillIdx % Math.Max(1, n);
+        string k = (idx < keys.Length) ? keys[idx] : "pierce";
+        enemyIntentText.text = L("INTENT") + ": " + L("ENS_" + k.ToUpper());
+    }
 
     void DoEnemyTurn()
     {
         if (enemyFreezeTurns > 0) { enemyFreezeTurns--; EndEnemyTurn(); return; }
-        // Simple AI: pick a swap producing best match
+        // v14: execute enemy SKILL by intent (constraints 105, 107)
+        var keys = EnemySkillKey(curBattle);
+        int n = EnemySkillCount(curBattle);
+        int idx = enemyNextSkillIdx % Math.Max(1, n);
+        string sk = (idx < keys.Length) ? keys[idx] : "pierce";
+        ExecuteEnemySkill(sk);
+        enemyNextSkillIdx = (enemyNextSkillIdx + 1) % Math.Max(1, n);
+        // Plus do a board move so the enemy still plays the match-3 turn
         int bestX = -1, bestY = -1, bestDir = 0; int bestScore = 0;
         System.Random rng = new System.Random();
         for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++)
         {
-            // Try right
             if (x+1 < gridW) { SwapCells(x,y,x+1,y); int s = SimulateScore(); SwapCells(x,y,x+1,y); if (s>bestScore){bestScore=s;bestX=x;bestY=y;bestDir=0;} }
-            // Try down
             if (y+1 < gridH) { SwapCells(x,y,x,y+1); int s = SimulateScore(); SwapCells(x,y,x,y+1); if (s>bestScore){bestScore=s;bestX=x;bestY=y;bestDir=1;} }
         }
         if (bestX < 0) { bestX = (int)(rng.NextDouble()*gridW); bestY = (int)(rng.NextDouble()*(gridH-1)); bestDir = 1; }
@@ -831,6 +952,38 @@ public class Bootstrapper : MonoBehaviour
         else SwapCells(bestX, bestY, bestX, bestY+1);
         FindAndResolveMatches(false);
         EndEnemyTurn();
+    }
+    void ExecuteEnemySkill(string sk)
+    {
+        // VFX flash on the player HP
+        if (vfxOverlay != null) { vfxAnim = sk; vfxT = 0f; vfxOverlay.color = new Color(1,1,1,1); }
+        switch (sk)
+        {
+            case "pierce": ApplyDamage(false, 15); break;
+            case "curse":
+            {
+                // Inject violet (color 5) into random 2 cells
+                System.Random r = new System.Random();
+                for (int n=0;n<2;n++) { int x=(int)(r.NextDouble()*gridW); int y=(int)(r.NextDouble()*gridH); if (grid[x,y].color>=0){ grid[x,y].color = 5; grid[x,y].curse=true; } }
+                ApplyDamage(false, 8);
+                break;
+            }
+            case "pact_blast": ApplyDamage(false, 25); break;
+            case "curse_storm":
+            {
+                System.Random r = new System.Random();
+                for (int n=0;n<4;n++) { int x=(int)(r.NextDouble()*gridW); int y=(int)(r.NextDouble()*gridH); if (grid[x,y].color>=0){ grid[x,y].color = 5; grid[x,y].curse=true; } }
+                ApplyDamage(false, 10);
+                break;
+            }
+            case "titan_wrath":
+            {
+                int d = (playerHpCur < playerHpMax/2) ? 40 : 22;
+                ApplyDamage(false, d);
+                break;
+            }
+            default: ApplyDamage(false, 12); break;
+        }
     }
     int SimulateScore()
     {
@@ -1150,64 +1303,93 @@ public class Bootstrapper : MonoBehaviour
         battlePanel.transform.SetParent(canvas.transform, false);
         var btRT = battlePanel.AddComponent<RectTransform>(); Stretch(btRT);
         battleBg = MakeImage(battlePanel.transform, "BattleBg", Color.white); Stretch(battleBg.rectTransform); battleBg.color = new Color(0.4f,0.4f,0.4f,1f);
-        // v13: Enemy strip top — large portrait 380x500 (constraint 88)
-        var enemyStrip = MakeImage(battlePanel.transform, "EnemyStrip", new Color(0.05f,0.04f,0.08f,0.0f));
-        var esRT = enemyStrip.rectTransform; esRT.anchorMin = new Vector2(0,1); esRT.anchorMax = new Vector2(1,1); esRT.pivot = new Vector2(0.5f,1);
-        esRT.anchoredPosition = new Vector2(0,-20); esRT.sizeDelta = new Vector2(-40, 520);
-        battleEnemyPortrait = MakeImage(enemyStrip.transform, "EnemyPort", Color.white);
+        // ===== v14 LAYOUT: TopBar → EnemyPanel → Board → SkillBar → PlayerHpBar (constraints 92-108) =====
+        // Reference resolution: 1080x1920 portrait. SafeArea: top=0, bottom=0.
+        // TopBar (right-top menu button) — constraint 96
+        var topBar = MakeImage(battlePanel.transform, "TopBar", new Color(0,0,0,0.0f));
+        var tbRT = topBar.rectTransform; tbRT.anchorMin = new Vector2(0,1); tbRT.anchorMax = new Vector2(1,1); tbRT.pivot = new Vector2(0.5f,1);
+        tbRT.anchoredPosition = new Vector2(0,0); tbRT.sizeDelta = new Vector2(0, 110);
+        var menuBtnGo = new GameObject("BattleMenuBtn"); menuBtnGo.transform.SetParent(topBar.transform, false);
+        var menuImg = menuBtnGo.AddComponent<Image>(); menuImg.color = new Color(0.10f,0.08f,0.15f,0.92f);
+        var menuBtnRT = menuImg.rectTransform; menuBtnRT.anchorMin = new Vector2(1,1); menuBtnRT.anchorMax = new Vector2(1,1); menuBtnRT.pivot = new Vector2(1,1);
+        menuBtnRT.anchoredPosition = new Vector2(-20,-20); menuBtnRT.sizeDelta = new Vector2(90, 90);
+        AddOutline(menuBtnGo, new Color(0.85f,0.75f,0.35f,1f), 3);
+        var menuBtn = menuBtnGo.AddComponent<Button>();
+        menuBtn.onClick.AddListener(() => OnBattleMenu());
+        var menuTxt = MakeText(menuBtnGo.transform, "MnuTxt", "☰", 56, new Color(1f,0.9f,0.55f,1f));
+        Stretch(menuTxt.rectTransform); menuTxt.alignment = TextAnchor.MiddleCenter; menuTxt.fontStyle = FontStyle.Bold;
+        AddOutline(menuTxt.gameObject, new Color(0,0,0,1), 2);
+        // EnemyPanel (constraint 95): avatar lt-corner, HP right of avatar, skills below HP
+        var enemyPanel = MakeImage(battlePanel.transform, "EnemyPanel", new Color(0.08f,0.05f,0.12f,0.55f));
+        var epnRT = enemyPanel.rectTransform; epnRT.anchorMin = new Vector2(0,1); epnRT.anchorMax = new Vector2(1,1); epnRT.pivot = new Vector2(0.5f,1);
+        epnRT.anchoredPosition = new Vector2(0,-110); epnRT.sizeDelta = new Vector2(-30, 360);
+        AddOutline(enemyPanel.gameObject, new Color(0.7f,0.2f,0.2f,0.8f), 2);
+        // Enemy avatar 240x300 lt-corner
+        battleEnemyPortrait = MakeImage(enemyPanel.transform, "EnemyPort", Color.white);
         var epRT = battleEnemyPortrait.rectTransform;
         epRT.anchorMin = new Vector2(0,1); epRT.anchorMax = new Vector2(0,1); epRT.pivot = new Vector2(0,1);
-        epRT.anchoredPosition = new Vector2(10,-10); epRT.sizeDelta = new Vector2(380, 500);
+        epRT.anchoredPosition = new Vector2(15,-15); epRT.sizeDelta = new Vector2(240, 300);
         battleEnemyPortrait.preserveAspect = true;
-        AddOutline(battleEnemyPortrait.gameObject, new Color(0.9f,0.3f,0.3f,0.9f), 3);
-        // Enemy HP bar to the right of large portrait
-        var ehpBg = MakeImage(enemyStrip.transform, "EHpBg", new Color(0.2f,0.05f,0.05f,0.95f));
-        var ehbRT = ehpBg.rectTransform; ehbRT.anchorMin = new Vector2(0,1); ehbRT.anchorMax = new Vector2(0,1); ehbRT.pivot = new Vector2(0,1);
-        ehbRT.anchoredPosition = new Vector2(410,-40); ehbRT.sizeDelta = new Vector2(560, 60);
+        AddOutline(battleEnemyPortrait.gameObject, new Color(0.9f,0.3f,0.3f,0.95f), 3);
+        // Enemy HP bar right of avatar (top of right area)
+        var ehpBg = MakeImage(enemyPanel.transform, "EHpBg", new Color(0.2f,0.05f,0.05f,0.96f));
+        var ehbRT = ehpBg.rectTransform; ehbRT.anchorMin = new Vector2(0,1); ehbRT.anchorMax = new Vector2(1,1); ehbRT.pivot = new Vector2(0,1);
+        ehbRT.anchoredPosition = new Vector2(270,-20); ehbRT.sizeDelta = new Vector2(-285, 70);
         AddOutline(ehpBg.gameObject, new Color(0.9f,0.3f,0.3f,1f), 2);
         enemyHpBar = MakeImage(ehpBg.transform, "EHpFill", new Color(0.85f,0.18f,0.18f,1));
         Stretch(enemyHpBar.rectTransform); enemyHpBar.fillAmount = 1f;
-        battleEnemyHpText = MakeText(ehpBg.transform, "EHpTxt", "100/100", 30, Color.white); Stretch(battleEnemyHpText.rectTransform); battleEnemyHpText.alignment = TextAnchor.MiddleCenter; battleEnemyHpText.fontStyle = FontStyle.Bold;
-        // v13: Player strip bottom — large portrait 280x360 (constraint 88)
-        var playerStrip = MakeImage(battlePanel.transform, "PlayerStrip", new Color(0.05f,0.04f,0.08f,0.0f));
-        var psRT = playerStrip.rectTransform; psRT.anchorMin = new Vector2(0,0); psRT.anchorMax = new Vector2(1,0); psRT.pivot = new Vector2(0.5f,0);
-        psRT.anchoredPosition = new Vector2(0,20); psRT.sizeDelta = new Vector2(-40, 380);
-        battlePlayerPortrait = MakeImage(playerStrip.transform, "PlayerPort", Color.white);
-        var ppRT = battlePlayerPortrait.rectTransform;
-        ppRT.anchorMin = new Vector2(0,0); ppRT.anchorMax = new Vector2(0,0); ppRT.pivot = new Vector2(0,0);
-        ppRT.anchoredPosition = new Vector2(10,10); ppRT.sizeDelta = new Vector2(280, 360);
-        battlePlayerPortrait.preserveAspect = true;
-        AddOutline(battlePlayerPortrait.gameObject, new Color(0.3f,0.85f,0.5f,0.9f), 3);
-        // Player HP bar to the right of large hero portrait
-        var phpBg = MakeImage(playerStrip.transform, "PHpBg", new Color(0.05f,0.2f,0.05f,0.95f));
-        var phbRT = phpBg.rectTransform; phbRT.anchorMin = new Vector2(0,0); phbRT.anchorMax = new Vector2(0,0); phbRT.pivot = new Vector2(0,0);
-        phbRT.anchoredPosition = new Vector2(310,300); phbRT.sizeDelta = new Vector2(540, 60);
-        AddOutline(phpBg.gameObject, new Color(0.3f,0.85f,0.5f,1f), 2);
-        playerHpBar = MakeImage(phpBg.transform, "PHpFill", new Color(0.3f,0.85f,0.3f,1));
-        Stretch(playerHpBar.rectTransform); playerHpBar.fillAmount = 1f;
-        battlePlayerHpText = MakeText(phpBg.transform, "PHpTxt", "100/100", 30, Color.white); Stretch(battlePlayerHpText.rectTransform); battlePlayerHpText.alignment = TextAnchor.MiddleCenter; battlePlayerHpText.fontStyle = FontStyle.Bold;
-        // Turn label
-        battleTurnText = MakeText(battlePanel.transform, "Turn", "", 46, new Color(1f,0.9f,0.5f,1f));
-        var ttuRT = battleTurnText.rectTransform; ttuRT.anchorMin = new Vector2(0.5f,1); ttuRT.anchorMax = new Vector2(0.5f,1); ttuRT.pivot = new Vector2(0.5f,1);
-        ttuRT.anchoredPosition = new Vector2(0,-330); ttuRT.sizeDelta = new Vector2(700,80);
-        battleTurnText.alignment = TextAnchor.MiddleCenter; battleTurnText.fontStyle = FontStyle.Bold;
-        AddOutline(battleTurnText.gameObject, new Color(0,0,0,1), 3);
-        // v13: Circular ability icons with VFX sprite + cooldown overlay (constraint 89)
-        string[] vfxKeys = new []{ "vfx_inferno_burst", "vfx_freeze", "vfx_titan_slam" };
-        Color[] ringTints = new []{ new Color(1f,0.45f,0.15f,1f), new Color(0.5f,0.85f,1f,1f), new Color(1f,0.9f,0.3f,1f) };
+        battleEnemyHpText = MakeText(ehpBg.transform, "EHpTxt", "100/100", 32, Color.white); Stretch(battleEnemyHpText.rectTransform); battleEnemyHpText.alignment = TextAnchor.MiddleCenter; battleEnemyHpText.fontStyle = FontStyle.Bold;
+        AddOutline(battleEnemyHpText.gameObject, new Color(0,0,0,1), 2);
+        // Enemy intent label (next skill) — constraint 107
+        enemyIntentText = MakeText(enemyPanel.transform, "EnIntent", "", 22, new Color(1f,0.85f,0.55f,1f));
+        var einRT = enemyIntentText.rectTransform; einRT.anchorMin = new Vector2(0,1); einRT.anchorMax = new Vector2(1,1); einRT.pivot = new Vector2(0,1);
+        einRT.anchoredPosition = new Vector2(270,-100); einRT.sizeDelta = new Vector2(-285, 36);
+        enemyIntentText.alignment = TextAnchor.MiddleLeft; enemyIntentText.fontStyle = FontStyle.Bold;
+        AddOutline(enemyIntentText.gameObject, new Color(0,0,0,1), 2);
+        // Enemy skill icons row (under HP) — up to 3, count by enemy tier
         for (int i=0;i<3;i++)
         {
+            var esGo = new GameObject("EnSkill"+i);
+            esGo.transform.SetParent(enemyPanel.transform, false);
+            var esImg = esGo.AddComponent<Image>(); esImg.color = new Color(0.15f,0.07f,0.12f,0.95f);
+            var esRT = esImg.rectTransform; esRT.anchorMin = new Vector2(0,1); esRT.anchorMax = new Vector2(0,1); esRT.pivot = new Vector2(0,1);
+            esRT.anchoredPosition = new Vector2(270 + i*180, -150); esRT.sizeDelta = new Vector2(160, 160);
+            AddOutline(esGo, new Color(0.85f,0.35f,0.35f,1f), 3);
+            enemySkillIcons[i] = esImg;
+            // CD text in lower-right corner
+            var cdT = MakeText(esGo.transform, "EnSkCd"+i, "", 30, new Color(1f,0.95f,0.85f,1f));
+            var cdRT = cdT.rectTransform; cdRT.anchorMin = new Vector2(1,0); cdRT.anchorMax = new Vector2(1,0); cdRT.pivot = new Vector2(1,0);
+            cdRT.anchoredPosition = new Vector2(-8,8); cdRT.sizeDelta = new Vector2(50,40);
+            cdT.alignment = TextAnchor.MiddleRight; cdT.fontStyle = FontStyle.Bold;
+            AddOutline(cdT.gameObject, new Color(0,0,0,1), 2);
+            enemySkillCdText[i] = cdT;
+            esGo.SetActive(false);
+        }
+        // BoardPanel — safe zone between EnemyPanel and SkillBar (constraint 97)
+        // Layout: enemy panel ends at y = -110-360 = -470 from top; PlayerHp 80 + SkillBar 180 = 260 from bottom
+        // Board height fills remaining area
+        var boardPanel = MakeImage(battlePanel.transform, "BoardPanel", new Color(0,0,0,0.0f));
+        var bpRT = boardPanel.rectTransform; bpRT.anchorMin = new Vector2(0,0); bpRT.anchorMax = new Vector2(1,1); bpRT.pivot = new Vector2(0.5f,0.5f);
+        bpRT.offsetMin = new Vector2(20, 280); bpRT.offsetMax = new Vector2(-20, -480);
+        boardPanelRT = bpRT;
+        // Player SkillBar (5 circular icons horizontal) ABOVE HP bar (constraint 94, 108)
+        var skillBar = MakeImage(battlePanel.transform, "PlayerSkillBar", new Color(0.08f,0.06f,0.10f,0.55f));
+        var sbRT = skillBar.rectTransform; sbRT.anchorMin = new Vector2(0,0); sbRT.anchorMax = new Vector2(1,0); sbRT.pivot = new Vector2(0.5f,0);
+        sbRT.anchoredPosition = new Vector2(0,90); sbRT.sizeDelta = new Vector2(-30, 180);
+        AddOutline(skillBar.gameObject, new Color(0.4f,0.6f,0.5f,0.6f), 2);
+        string[] vfxKeys = new []{ "vfx_inferno_burst", "vfx_freeze", "vfx_titan_slam", "bonus_hermes_step", "bonus_zeus_lightning" };
+        Color[] ringTints = new []{ new Color(1f,0.45f,0.15f,1f), new Color(0.5f,0.85f,1f,1f), new Color(1f,0.9f,0.3f,1f), new Color(0.9f,0.8f,0.4f,1f), new Color(0.6f,0.85f,1f,1f) };
+        for (int i=0;i<5;i++)
+        {
             int captured = i;
-            // Ring background (circle outline tinted)
             var ringGo = new GameObject("AbilRing"+i);
-            ringGo.transform.SetParent(battlePanel.transform, false);
-            var ringImg = ringGo.AddComponent<Image>(); ringImg.color = new Color(0.10f,0.08f,0.15f,0.95f);
+            ringGo.transform.SetParent(skillBar.transform, false);
+            var ringImg = ringGo.AddComponent<Image>(); ringImg.color = new Color(0.10f,0.08f,0.15f,0.97f);
             var ringRT = ringImg.rectTransform;
-            ringRT.anchorMin = new Vector2(1,0.5f); ringRT.anchorMax = new Vector2(1,0.5f); ringRT.pivot = new Vector2(1,0.5f);
-            ringRT.anchoredPosition = new Vector2(-20, 200 - i*180); ringRT.sizeDelta = new Vector2(150, 150);
+            ringRT.anchorMin = new Vector2(0,0.5f); ringRT.anchorMax = new Vector2(0,0.5f); ringRT.pivot = new Vector2(0,0.5f);
+            ringRT.anchoredPosition = new Vector2(15 + i*200, 0); ringRT.sizeDelta = new Vector2(150, 150);
             AddOutline(ringGo, ringTints[i], 4);
             abilityRingBg[i] = ringImg;
-            // Inner VFX icon
             var iconGo = new GameObject("AbilIcon"+i);
             iconGo.transform.SetParent(ringGo.transform, false);
             var iconImg = iconGo.AddComponent<Image>();
@@ -1215,25 +1397,42 @@ public class Bootstrapper : MonoBehaviour
             iconImg.color = Color.white; iconImg.preserveAspect = true; iconImg.raycastTarget = false;
             var iRT = iconImg.rectTransform; iRT.anchorMin = new Vector2(0,0); iRT.anchorMax = new Vector2(1,1); iRT.pivot = new Vector2(0.5f,0.5f);
             iRT.offsetMin = new Vector2(10,10); iRT.offsetMax = new Vector2(-10,-10);
-            // Cooldown radial mask
             var cdGo = new GameObject("AbilCd"+i);
             cdGo.transform.SetParent(ringGo.transform, false);
-            var cdImg = cdGo.AddComponent<Image>(); cdImg.color = new Color(0,0,0,0.65f); cdImg.raycastTarget = false;
+            var cdImg = cdGo.AddComponent<Image>(); cdImg.color = new Color(0,0,0,0.7f); cdImg.raycastTarget = false;
             cdImg.type = Image.Type.Filled; cdImg.fillAmount = 0f;
             var cdRT = cdImg.rectTransform; cdRT.anchorMin = Vector2.zero; cdRT.anchorMax = Vector2.one; cdRT.offsetMin = Vector2.zero; cdRT.offsetMax = Vector2.zero;
             abilityCdMask[i] = cdImg;
-            // Tap button
             var abBtn = ringGo.AddComponent<Button>();
             abBtn.onClick.AddListener(() => UseAbility(captured));
-            // Cost badge bottom
             var abTxt = MakeText(ringGo.transform, "Cost", "", 22, new Color(1f,0.95f,0.85f,1f));
             var atRT = abTxt.rectTransform; atRT.anchorMin = new Vector2(0,0); atRT.anchorMax = new Vector2(1,0); atRT.pivot = new Vector2(0.5f,0);
-            atRT.anchoredPosition = new Vector2(0,-26); atRT.sizeDelta = new Vector2(0,40);
+            atRT.anchoredPosition = new Vector2(0,-22); atRT.sizeDelta = new Vector2(0,40);
             abTxt.alignment = TextAnchor.MiddleCenter; abTxt.fontStyle = FontStyle.Bold;
             AddOutline(abTxt.gameObject, new Color(0,0,0,1), 2);
             abilityButtonsGO.Add(ringGo);
             abilityButtonsText.Add(abTxt);
         }
+        // Player HP bar — full-width bottom (constraint 93)
+        var phpBg = MakeImage(battlePanel.transform, "PHpBg", new Color(0.04f,0.16f,0.06f,0.96f));
+        var phbRT = phpBg.rectTransform; phbRT.anchorMin = new Vector2(0,0); phbRT.anchorMax = new Vector2(1,0); phbRT.pivot = new Vector2(0.5f,0);
+        phbRT.anchoredPosition = new Vector2(0,10); phbRT.sizeDelta = new Vector2(-30, 70);
+        AddOutline(phpBg.gameObject, new Color(0.3f,0.85f,0.5f,1f), 3);
+        playerHpBar = MakeImage(phpBg.transform, "PHpFill", new Color(0.3f,0.85f,0.3f,1));
+        Stretch(playerHpBar.rectTransform); playerHpBar.fillAmount = 1f;
+        battlePlayerHpText = MakeText(phpBg.transform, "PHpTxt", "100/100", 36, Color.white); Stretch(battlePlayerHpText.rectTransform); battlePlayerHpText.alignment = TextAnchor.MiddleCenter; battlePlayerHpText.fontStyle = FontStyle.Bold;
+        AddOutline(battlePlayerHpText.gameObject, new Color(0,0,0,1), 2);
+        // Hidden player portrait — still referenced by code, parked off-screen
+        battlePlayerPortrait = MakeImage(battlePanel.transform, "PlayerPortHidden", new Color(1,1,1,0));
+        battlePlayerPortrait.raycastTarget = false; battlePlayerPortrait.preserveAspect = true;
+        var ppRT = battlePlayerPortrait.rectTransform; ppRT.anchorMin = new Vector2(0,0); ppRT.anchorMax = new Vector2(0,0); ppRT.pivot = new Vector2(0,0);
+        ppRT.anchoredPosition = new Vector2(-9999,-9999); ppRT.sizeDelta = new Vector2(10,10);
+        // Turn label — centered above board
+        battleTurnText = MakeText(battlePanel.transform, "Turn", "", 40, new Color(1f,0.9f,0.5f,1f));
+        var ttuRT = battleTurnText.rectTransform; ttuRT.anchorMin = new Vector2(0,1); ttuRT.anchorMax = new Vector2(1,1); ttuRT.pivot = new Vector2(0.5f,1);
+        ttuRT.anchoredPosition = new Vector2(0,-490); ttuRT.sizeDelta = new Vector2(-200,60);
+        battleTurnText.alignment = TextAnchor.MiddleCenter; battleTurnText.fontStyle = FontStyle.Bold;
+        AddOutline(battleTurnText.gameObject, new Color(0,0,0,1), 3);
         // VFX overlay
         vfxOverlay = MakeImage(battlePanel.transform, "Vfx", new Color(1,1,1,0));
         var vfRT = vfxOverlay.rectTransform; vfRT.anchorMin = new Vector2(0.5f,0.5f); vfRT.anchorMax = new Vector2(0.5f,0.5f);
@@ -1690,5 +1889,30 @@ public class Bootstrapper : MonoBehaviour
             }
         }
         if (state == State.Battle) RefreshAbilityButtons();
+    }
+}
+
+// v14: swipe gesture handler attached to each gem GameObject
+public class GemDragHandler : UnityEngine.MonoBehaviour,
+    UnityEngine.EventSystems.IBeginDragHandler,
+    UnityEngine.EventSystems.IDragHandler,
+    UnityEngine.EventSystems.IEndDragHandler
+{
+    Bootstrapper bs; int cx, cy;
+    UnityEngine.Vector2 startPos;
+    bool dragging;
+    public void Init(Bootstrapper b, int x, int y) { bs = b; cx = x; cy = y; }
+    public void OnBeginDrag(UnityEngine.EventSystems.PointerEventData e) { startPos = e.position; dragging = true; }
+    public void OnDrag(UnityEngine.EventSystems.PointerEventData e) { /* visual hint optional */ }
+    public void OnEndDrag(UnityEngine.EventSystems.PointerEventData e)
+    {
+        if (!dragging || bs == null) return; dragging = false;
+        UnityEngine.Vector2 d = e.position - startPos;
+        float ax = (d.x < 0 ? -d.x : d.x); float ay = (d.y < 0 ? -d.y : d.y);
+        if (ax < 25f && ay < 25f) return; // too small - treat as tap (Button handles it)
+        int dx = 0, dy = 0;
+        if (ax > ay) dx = (d.x > 0) ? 1 : -1;
+        else        dy = (d.y > 0) ? -1 : 1; // UI Y inverted (top is +)
+        bs.OnGemSwipe(cx, cy, dx, dy);
     }
 }
