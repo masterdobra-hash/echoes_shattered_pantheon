@@ -686,8 +686,14 @@ public class Bootstrapper : MonoBehaviour
             var img = gemImages[x,y];
             if (img == null) continue;
             var cell = grid[x,y];
-            string key = (cell.color < BaseGemKeys.Length) ? BaseGemKeys[cell.color] : episodes[currentEpisode-1].exclusiveGem;
+            // v15: render BONUS sprite only when bonus != NONE (constraint 111 - no hammer overlay)
+            string key;
+            if (cell.bonus == BONUS_LINE_H || cell.bonus == BONUS_LINE_V) key = "bonus_hermes_step";
+            else if (cell.bonus == BONUS_SQUARE6) key = "bonus_hephaestus_hammer";
+            else if (cell.bonus == BONUS_COLOR_BOMB) key = "bonus_zeus_lightning";
+            else key = (cell.color >= 0 && cell.color < BaseGemKeys.Length) ? BaseGemKeys[cell.color] : episodes[currentEpisode-1].exclusiveGem;
             if (sprites.ContainsKey(key)) img.sprite = sprites[key];
+            else img.sprite = null;
             img.color = (selX==x && selY==y) ? new Color(1.3f,1.2f,0.7f,1f) : Color.white;
         }
     }
@@ -807,18 +813,21 @@ public class Bootstrapper : MonoBehaviour
         while (true)
         {
             bool[,] m = new bool[gridW, gridH];
+            int[,] runLenH = new int[gridW, gridH]; // length of horizontal run at this cell (>=3 means matched in H)
+            int[,] runLenV = new int[gridW, gridH]; // length of vertical run at this cell
             int matchCount = 0;
             int maxRun = 0;
+            int bonusAnchorX = -1, bonusAnchorY = -1, bonusType = BONUS_NONE, bonusColor = -1;
             // Horizontal
             for (int y=0;y<gridH;y++)
             {
                 int run = 1;
                 for (int x=1;x<gridW;x++)
                 {
-                    if (grid[x,y].color == grid[x-1,y].color) run++;
-                    else { if (run >= 3) { for (int k=0;k<run;k++) m[x-1-k,y] = true; maxRun = Math.Max(maxRun, run); matchCount += run; } run = 1; }
+                    if (grid[x,y].color >= 0 && grid[x,y].color == grid[x-1,y].color) run++;
+                    else { if (run >= 3) { for (int k=0;k<run;k++) { m[x-1-k,y] = true; runLenH[x-1-k,y] = run; } maxRun = Math.Max(maxRun, run); matchCount += run; if (run >= 4 && bonusType == BONUS_NONE) { bonusAnchorX = x-1-(run/2); bonusAnchorY = y; bonusColor = grid[x-1,y].color; bonusType = (run >= 5) ? BONUS_COLOR_BOMB : BONUS_LINE_H; } } run = 1; }
                 }
-                if (run >= 3) { for (int k=0;k<run;k++) m[gridW-1-k,y] = true; maxRun = Math.Max(maxRun, run); matchCount += run; }
+                if (run >= 3) { for (int k=0;k<run;k++) { m[gridW-1-k,y] = true; runLenH[gridW-1-k,y] = run; } maxRun = Math.Max(maxRun, run); matchCount += run; if (run >= 4 && bonusType == BONUS_NONE) { bonusAnchorX = gridW-1-(run/2); bonusAnchorY = y; bonusColor = grid[gridW-1,y].color; bonusType = (run >= 5) ? BONUS_COLOR_BOMB : BONUS_LINE_H; } }
             }
             // Vertical
             for (int x=0;x<gridW;x++)
@@ -826,24 +835,37 @@ public class Bootstrapper : MonoBehaviour
                 int run = 1;
                 for (int y=1;y<gridH;y++)
                 {
-                    if (grid[x,y].color == grid[x,y-1].color) run++;
-                    else { if (run >= 3) { for (int k=0;k<run;k++) m[x,y-1-k] = true; maxRun = Math.Max(maxRun, run); matchCount += run; } run = 1; }
+                    if (grid[x,y].color >= 0 && grid[x,y].color == grid[x,y-1].color) run++;
+                    else { if (run >= 3) { for (int k=0;k<run;k++) { m[x,y-1-k] = true; runLenV[x,y-1-k] = run; } maxRun = Math.Max(maxRun, run); matchCount += run; if (run >= 4 && bonusType == BONUS_NONE) { bonusAnchorX = x; bonusAnchorY = y-1-(run/2); bonusColor = grid[x,y-1].color; bonusType = (run >= 5) ? BONUS_COLOR_BOMB : BONUS_LINE_V; } } run = 1; }
                 }
-                if (run >= 3) { for (int k=0;k<run;k++) m[x,gridH-1-k] = true; maxRun = Math.Max(maxRun, run); matchCount += run; }
+                if (run >= 3) { for (int k=0;k<run;k++) { m[x,gridH-1-k] = true; runLenV[x,gridH-1-k] = run; } maxRun = Math.Max(maxRun, run); matchCount += run; if (run >= 4 && bonusType == BONUS_NONE) { bonusAnchorX = x; bonusAnchorY = gridH-1-(run/2); bonusColor = grid[x,gridH-1].color; bonusType = (run >= 5) ? BONUS_COLOR_BOMB : BONUS_LINE_V; } }
             }
             if (matchCount == 0) break;
+            // v15: detect T/L shape → Hephaestus Hammer (constraint 102)
+            for (int x=0;x<gridW && bonusType != BONUS_COLOR_BOMB;x++) for (int y=0;y<gridH;y++)
+            {
+                if (runLenH[x,y] >= 3 && runLenV[x,y] >= 3) { bonusAnchorX = x; bonusAnchorY = y; bonusColor = grid[x,y].color; bonusType = BONUS_SQUARE6; break; }
+            }
             totalMatched += matchCount;
-            // Trigger bonus drops on match-4+
-            int bonusDrop = (maxRun >= 5) ? 3 : (maxRun >= 4 ? 1 : 0); // 3=color-bomb,1=line
             int dmg = (int)(matchCount * 2 * comboMul);
             if (maxRun >= 4) { dmg = (int)(dmg * 1.5f); extraTurn = true; }
-            // Apply damage
             ApplyDamage(isPlayer, dmg);
             // Heal on mortal gem
             for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++) if (m[x,y] && grid[x,y].color == 4 && isPlayer) playerHpCur = Math.Min(playerHpMax, playerHpCur + 3);
-            // Damage from violet curses on player turn? — violet is enemy element: if player matches violet, removes curses
-            // Clear matched, gravity
+            // v15: spawn destroy VFX per gem type before clearing (constraint 100, 111)
+            for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++)
+            {
+                if (m[x,y]) {
+                    int c = grid[x,y].color;
+                    SpawnDestroyVfx(x, y, c);
+                }
+            }
+            // Clear matched cells, BUT preserve the anchor cell as bonus piece (constraints 101-103, 112)
             for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++) if (m[x,y]) grid[x,y].color = -1;
+            if (bonusType != BONUS_NONE && bonusAnchorX >= 0 && bonusAnchorY >= 0 && bonusColor >= 0) {
+                grid[bonusAnchorX, bonusAnchorY].color = bonusColor;
+                grid[bonusAnchorX, bonusAnchorY].bonus = bonusType;
+            }
             Gravity();
             Refill();
             comboMul++;
@@ -865,7 +887,7 @@ public class Bootstrapper : MonoBehaviour
             }
         }
     }
-    // v14: spawn destroy VFX per gem type (constraint 100)
+    // v15: spawn destroy VFX per gem type with auto-Destroy after fade (constraints 100, 111)
     void SpawnDestroyVfx(int x, int y, int color)
     {
         if (gridRoot == null) return;
@@ -879,7 +901,8 @@ public class Bootstrapper : MonoBehaviour
         rt.anchorMin = new Vector2(0,1); rt.anchorMax = new Vector2(0,1); rt.pivot = new Vector2(0.5f,0.5f);
         rt.sizeDelta = new Vector2(curCellSz*1.4f, curCellSz*1.4f);
         rt.anchoredPosition = new Vector2(x*curCellSz + curCellSz/2 + 10, -(y*curCellSz + curCellSz/2 + 10));
-        activeTweens.Add(new GemTween{ rt = rt, from = rt.anchoredPosition, to = rt.anchoredPosition, t=0, dur=0.45f, kind=1, img = img });
+        // kind=3 — fade + auto destroy GO at tween end (Update loop)
+        activeTweens.Add(new GemTween{ rt = rt, from = rt.anchoredPosition, to = rt.anchoredPosition, t=0, dur=0.45f, kind=3, img = img });
     }
 
     void Refill()
@@ -1309,10 +1332,12 @@ public class Bootstrapper : MonoBehaviour
         var topBar = MakeImage(battlePanel.transform, "TopBar", new Color(0,0,0,0.0f));
         var tbRT = topBar.rectTransform; tbRT.anchorMin = new Vector2(0,1); tbRT.anchorMax = new Vector2(1,1); tbRT.pivot = new Vector2(0.5f,1);
         tbRT.anchoredPosition = new Vector2(0,0); tbRT.sizeDelta = new Vector2(0, 110);
-        var menuBtnGo = new GameObject("BattleMenuBtn"); menuBtnGo.transform.SetParent(topBar.transform, false);
-        var menuImg = menuBtnGo.AddComponent<Image>(); menuImg.color = new Color(0.10f,0.08f,0.15f,0.92f);
+        var menuBtnGo = new GameObject("BattleMenuBtn"); menuBtnGo.transform.SetParent(battlePanel.transform, false);
+        var menuImg = menuBtnGo.AddComponent<Image>(); menuImg.color = new Color(0.10f,0.08f,0.15f,0.95f);
+        if (sprites.ContainsKey("circle_mask")) { menuImg.sprite = sprites["circle_mask"]; }
         var menuBtnRT = menuImg.rectTransform; menuBtnRT.anchorMin = new Vector2(1,1); menuBtnRT.anchorMax = new Vector2(1,1); menuBtnRT.pivot = new Vector2(1,1);
-        menuBtnRT.anchoredPosition = new Vector2(-20,-20); menuBtnRT.sizeDelta = new Vector2(90, 90);
+        menuBtnRT.anchoredPosition = new Vector2(-25,-25); menuBtnRT.sizeDelta = new Vector2(110, 110);
+        menuBtnGo.transform.SetAsLastSibling();
         AddOutline(menuBtnGo, new Color(0.85f,0.75f,0.35f,1f), 3);
         var menuBtn = menuBtnGo.AddComponent<Button>();
         menuBtn.onClick.AddListener(() => OnBattleMenu());
@@ -1385,6 +1410,7 @@ public class Bootstrapper : MonoBehaviour
             var ringGo = new GameObject("AbilRing"+i);
             ringGo.transform.SetParent(skillBar.transform, false);
             var ringImg = ringGo.AddComponent<Image>(); ringImg.color = new Color(0.10f,0.08f,0.15f,0.97f);
+            if (sprites.ContainsKey("circle_mask")) { ringImg.sprite = sprites["circle_mask"]; ringImg.color = ringTints[i]; }
             var ringRT = ringImg.rectTransform;
             ringRT.anchorMin = new Vector2(0,0.5f); ringRT.anchorMax = new Vector2(0,0.5f); ringRT.pivot = new Vector2(0,0.5f);
             ringRT.anchoredPosition = new Vector2(15 + i*200, 0); ringRT.sizeDelta = new Vector2(150, 150);
@@ -1413,10 +1439,10 @@ public class Bootstrapper : MonoBehaviour
             abilityButtonsGO.Add(ringGo);
             abilityButtonsText.Add(abTxt);
         }
-        // Player HP bar — full-width bottom (constraint 93)
+        // v15: Player HP bar — truly full-width bottom (constraints 93)
         var phpBg = MakeImage(battlePanel.transform, "PHpBg", new Color(0.04f,0.16f,0.06f,0.96f));
         var phbRT = phpBg.rectTransform; phbRT.anchorMin = new Vector2(0,0); phbRT.anchorMax = new Vector2(1,0); phbRT.pivot = new Vector2(0.5f,0);
-        phbRT.anchoredPosition = new Vector2(0,10); phbRT.sizeDelta = new Vector2(-30, 70);
+        phbRT.offsetMin = new Vector2(15, 10); phbRT.offsetMax = new Vector2(-15, 90);
         AddOutline(phpBg.gameObject, new Color(0.3f,0.85f,0.5f,1f), 3);
         playerHpBar = MakeImage(phpBg.transform, "PHpFill", new Color(0.3f,0.85f,0.3f,1));
         Stretch(playerHpBar.rectTransform); playerHpBar.fillAmount = 1f;
@@ -1872,8 +1898,15 @@ public class Bootstrapper : MonoBehaviour
                     if (tw.rt != null) tw.rt.anchoredPosition = tw.from + (tw.to - tw.from) * ease;
                 } else if (tw.kind == 1) {
                     if (tw.img != null) tw.img.color = new Color(tw.img.color.r, tw.img.color.g, tw.img.color.b, 1f - a);
+                } else if (tw.kind == 3) {
+                    // v15: destroy VFX overlay - fade out + scale up, auto-Destroy GO at end (constraint 111)
+                    if (tw.img != null) { tw.img.color = new Color(1f,1f,1f, 1f - a); if (tw.rt != null) tw.rt.localScale = new Vector3(1f + a*0.5f, 1f + a*0.5f, 1f); }
                 }
-                if (a >= 1f) { tw.done = true; activeTweens.RemoveAt(i); }
+                if (a >= 1f) {
+                    tw.done = true;
+                    if (tw.kind == 3 && tw.img != null && tw.img.gameObject != null) UnityEngine.Object.Destroy(tw.img.gameObject);
+                    activeTweens.RemoveAt(i);
+                }
             }
         }
         // v13: cooldown decay
