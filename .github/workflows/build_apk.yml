@@ -7,58 +7,74 @@ on:
 
 jobs:
   build:
-    name: Build for Android
+    name: Build for Android (Unity 6000.0.23f1)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
+
     steps:
-      - name: Checkout
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           lfs: true
 
-      - name: Cache Library
-        uses: actions/cache@v4
-        with:
-          path: Library
-          key: Library-Android-BiRP-GLES3-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
-          restore-keys: |
-            Library-Android-BiRP-GLES3-
-            Library-Android-BiRP-
-
+      # ── 2. Disk space (Unity + IL2CPP нужно ~20 GB) ───────────────────────
       - name: Free disk space
         run: |
+          echo "=== Before cleanup ==="
+          df -h
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo apt-get clean
+          echo "=== After cleanup ==="
           df -h
 
-      - name: Build Unity (Android, IL2CPP)
+      # ── 3. Library cache (ускоряет повторные сборки в ~3 раза) ────────────
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-Android-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-Android-
+            Library-
+
+      # ── 4. Build ──────────────────────────────────────────────────────────
+      - name: Build Unity project (Android IL2CPP)
         uses: game-ci/unity-builder@v4
         env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          unityVersion: 6000.0.23f1
-          targetPlatform: Android
-          androidExportType: androidPackage
-          androidTargetSdkVersion: AndroidApiLevel34
-          androidAppBundle: false
-          allowDirtyBuild: true
+          unityVersion:            6000.0.23f1
+          targetPlatform:          Android
+          androidExportType:       androidPackage
+          androidTargetSdkVersion: AndroidApiLevel35
+          androidAppBundle:        false
+          allowDirtyBuild:         true
+          buildName:               EchoesShatteredPantheon
 
+      # ── 5. Upload APK ─────────────────────────────────────────────────────
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: echoes-shattered-pantheon-apk
+          name: EchoesShatteredPantheon-APK-${{ github.run_number }}
           path: build/Android/*.apk
           if-no-files-found: error
+          retention-days: 14
 
+      # ── 6. Upload logs (всегда, даже при ошибке) ──────────────────────────
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs
+          name: build-logs-${{ github.run_number }}
           path: |
-            /home/runner/.cache/unity3d/logs
-            Logs
+            Logs/
+            /home/runner/.cache/unity3d/logs/
           if-no-files-found: ignore
+          retention-days: 7
