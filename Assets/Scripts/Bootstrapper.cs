@@ -245,6 +245,9 @@ public class Bootstrapper : MonoBehaviour
             "gem_pact","gem_storm","gem_blood","gem_ash","gem_mortal","gem_violet",
             "gem_ep2_soul","gem_ep3_tide","gem_ep4_frost","gem_ep5_oak","gem_ep6_ankh","gem_ep7_obsidian",
             "vfx_inferno_burst","vfx_freeze","vfx_titan_slam",
+            // v14-v15 battle assets — MUST be loaded or UI Images render as blank white squares
+            "circle_mask","bonus_hermes_step","bonus_hephaestus_hammer","bonus_zeus_lightning",
+            "vfx_destroy_pact","vfx_destroy_storm","vfx_destroy_blood","vfx_destroy_ash","vfx_destroy_mortal","vfx_destroy_violet",
             "bg_battle_arena","bg_ep2_erebus","bg_ep3_aegean","bg_ep4_asgard","bg_ep5_slavs","bg_ep6_egypt","bg_ep7_aztec",
             "icon_shop","icon_echoes","icon_sparks",
             "enemy_hoplite_corrupt","enemy_shadow_priestess","enemy_minotaur"
@@ -668,6 +671,9 @@ public class Bootstrapper : MonoBehaviour
 
     void RenderGrid()
     {
+        // v16 stability invariant: logic is authoritative. Never leave a tweened RectTransform
+        // at a previous cell after grid data has changed; that caused ghosting/overlap/white cells.
+        activeTweens.Clear();
         if (gemImages == null || gemImages.GetLength(0) != gridW || gemImages.GetLength(1) != gridH)
         {
             // Clear old
@@ -692,8 +698,16 @@ public class Bootstrapper : MonoBehaviour
             else if (cell.bonus == BONUS_SQUARE6) key = "bonus_hephaestus_hammer";
             else if (cell.bonus == BONUS_COLOR_BOMB) key = "bonus_zeus_lightning";
             else key = (cell.color >= 0 && cell.color < BaseGemKeys.Length) ? BaseGemKeys[cell.color] : episodes[currentEpisode-1].exclusiveGem;
+            // No null sprites: fallback to the cell's base gem if an optional asset is absent.
             if (sprites.ContainsKey(key)) img.sprite = sprites[key];
-            else img.sprite = null;
+            else {
+                string fallback = (cell.color >= 0 && cell.color < BaseGemKeys.Length) ? BaseGemKeys[cell.color] : "gem_pact";
+                img.sprite = sprites.ContainsKey(fallback) ? sprites[fallback] : null;
+            }
+            // Reset the view to its exact data-grid coordinate every render.
+            var grt = img.rectTransform;
+            grt.anchoredPosition = new Vector2(x*curCellSz + curCellSz/2 + 10, -(y*curCellSz + curCellSz/2 + 10));
+            grt.localScale = Vector3.one;
             img.color = (selX==x && selY==y) ? new Color(1.3f,1.2f,0.7f,1f) : Color.white;
         }
     }
