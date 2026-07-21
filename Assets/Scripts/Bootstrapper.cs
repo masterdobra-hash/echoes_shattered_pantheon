@@ -9,6 +9,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
 
 public class Bootstrapper : MonoBehaviour
 {
@@ -2352,8 +2353,6 @@ public class Bootstrapper : MonoBehaviour
 }
 
 // ============ GemDragHandler (attached per gem cell) ============
-using UnityEngine.EventSystems;
-
 public class GemDragHandler : MonoBehaviour, IBeginDragHandler, IEndDragHandler
 {
     Bootstrapper board;
