@@ -602,7 +602,6 @@ public class Bootstrapper : MonoBehaviour
 
     Image playerHpBar, enemyHpBar;
     Image battleBg, battleEnemyPortrait, battlePlayerPortrait;
-    Text  battleTurnText, battleEnemyHpText, battlePlayerHpText;
     Image vfxOverlay;
     string vfxAnim = "";
     float  vfxT    = 0f;
