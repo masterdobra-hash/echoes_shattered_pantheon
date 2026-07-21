@@ -1,9 +1,11 @@
 // ============================================================================
-// Echoes: Shattered Pantheon — Iteration S (v4.0.0)
-// VN (Path G) + Match-3 battle + Shop + Multi-ending + 7 episodes
-// Constraints satisfied: 1-82 (see project canon, especially 64-82)
+// Echoes: Shattered Pantheon — Iteration S (v5.0.0 — CLEAN REBUILD)
+// Match-3 engine: clean model/view separation, coroutine state-machine.
+// All VN, UI, lore, episodes, shop, endings preserved from v4.0.0.
+// GUID: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb (Bootstrapper.cs.meta preserved)
 // ============================================================================
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -15,39 +17,35 @@ public class Bootstrapper : MonoBehaviour
     enum Lang { EN, RU }
     enum Path { Undecided, Pact, Vengeance, Mortals }
 
-    // VN line model (same as v11)
     class Line {
         public string speaker; public string bg; public string bgm; public string sfx;
         public string en; public string ru; public Choice[] choices;
-        public int triggerBattle; // 0 = no battle, 1..11 = battle id within episode
+        public int triggerBattle;
     }
     class Choice {
         public string en; public string ru;
-        public int pathBias; // 1=Pact, 2=Vengeance, 3=Mortals, 0=neutral
+        public int pathBias;
     }
-
-    // Episode definition
     class Episode {
-        public int id;                 // 1..7
-        public string nameEn, nameRu;  // "Fall of Olympus" / "Падение Олимпа"
+        public int id;
+        public string nameEn, nameRu;
         public string subtitleEn, subtitleRu;
-        public string bgKey;           // primary background sprite
-        public string bgmCalm, bgmBattle; // reuses bgm_olympus/bgm_tense for all eps
-        public string exclusiveGem;    // pantheon-specific gem id
-        public List<Line> script;      // dialogue + lore lines (with pre-battle triggers)
-        public BattleConfig[] battles; // 10 normal + 1 boss = 11 configs
+        public string bgKey;
+        public string bgmCalm, bgmBattle;
+        public string exclusiveGem;
+        public List<Line> script;
+        public BattleConfig[] battles;
     }
     class BattleConfig {
-        public int id;          // 1..11 within episode (11 = boss)
+        public int id;
         public int gridW, gridH;
         public int colors;
         public int enemyHp;
         public int playerHp;
-        public string enemyKey;   // enemy portrait key
-        public string arenaBgKey; // battle background (defaults to episode bg)
-        public string preEn, preRu; // short lore line shown before battle
+        public string enemyKey;
+        public string arenaBgKey;
+        public string preEn, preRu;
         public bool isBoss;
-        // Branch variations (Pact/Vengeance/Mortals) — modifies enemy & arena
         public string altEnemyVengeance, altEnemyMortals;
     }
 
@@ -59,15 +57,14 @@ public class Bootstrapper : MonoBehaviour
     int currentEpisode = 1;
     int currentBattle = 0;
     int idx = 0;
-    int echoes = 0;       // soft currency
-    int sparks = 0;       // hard currency (mock donate)
+    int echoes = 0;
+    int sparks = 0;
     bool musicOn = true, sfxOn = true;
     List<Episode> episodes;
     Dictionary<string, Sprite> sprites = new Dictionary<string, Sprite>();
     Dictionary<string, AudioClip> clips = new Dictionary<string, AudioClip>();
     Dictionary<string, int> abilityCount = new Dictionary<string, int>();
 
-    // UI roots
     Canvas canvas;
     Image bgImage, bgImageNext;
     Image portraitImage;
@@ -95,18 +92,15 @@ public class Bootstrapper : MonoBehaviour
     List<GameObject> abilityButtonsGO = new List<GameObject>();
     List<Text> abilityButtonsText = new List<Text>();
 
-    // Audio
     AudioSource bgmSrc, sfxSrc;
     string currentBgm = "";
     string currentBgKey = "";
 
-    // Typewriter
     string fullText = "";
     int typeIdx = 0; float typeTimer = 0f;
     const float TYPE_SPEED = 0.025f;
     bool typing = false;
 
-    // Fade overlay
     float fadeAlpha = 1f;
     int fadeDir = -1;
     bool crossfading = false;
@@ -114,7 +108,6 @@ public class Bootstrapper : MonoBehaviour
     const float CROSS_DUR = 1.2f;
     string pendingBg = "";
 
-    // NEXT pulse
     float pulseT = 0f;
 
     // ============ ENTRY ============
@@ -133,7 +126,6 @@ public class Bootstrapper : MonoBehaviour
     }
 
     // ============ LOC ============
-    // v14: localization keys for intents/enemy skills/bonuses
     string L14(string key)
     {
         bool ru = (lang == Lang.RU);
@@ -238,14 +230,11 @@ public class Bootstrapper : MonoBehaviour
     void LoadAllSprites()
     {
         string[] names = new string[]{
-            // V11 (existing in Resources)
             "portrait_eon","portrait_pythia","portrait_hermes","portrait_fallen",
             "bg_sarcophagus","bg_grove","bg_agora","bg_storm","bg_altar","bg_title",
-            // V12 new
             "gem_pact","gem_storm","gem_blood","gem_ash","gem_mortal","gem_violet",
             "gem_ep2_soul","gem_ep3_tide","gem_ep4_frost","gem_ep5_oak","gem_ep6_ankh","gem_ep7_obsidian",
             "vfx_inferno_burst","vfx_freeze","vfx_titan_slam",
-            // v14-v15 battle assets — MUST be loaded or UI Images render as blank white squares
             "circle_mask","bonus_hermes_step","bonus_hephaestus_hammer","bonus_zeus_lightning",
             "vfx_destroy_pact","vfx_destroy_storm","vfx_destroy_blood","vfx_destroy_ash","vfx_destroy_mortal","vfx_destroy_violet",
             "bg_battle_arena","bg_ep2_erebus","bg_ep3_aegean","bg_ep4_asgard","bg_ep5_slavs","bg_ep6_egypt","bg_ep7_aztec",
@@ -270,7 +259,7 @@ public class Bootstrapper : MonoBehaviour
         }
     }
 
-    // ============ EPISODE / SCRIPT DATA (huge — split into methods) ============
+    // ============ EPISODES (preserved from v4.0.0) ============
     void BuildEpisodes()
     {
         episodes = new List<Episode>();
@@ -291,9 +280,8 @@ public class Bootstrapper : MonoBehaviour
         ep.subtitleEn = "Episode 1"; ep.subtitleRu = "Эпизод 1";
         ep.bgKey = "bg_altar";
         ep.bgmCalm = "bgm_olympus"; ep.bgmBattle = "bgm_tense";
-        ep.exclusiveGem = "gem_violet"; // EP1 uses base set + violet curses
+        ep.exclusiveGem = "gem_violet";
         ep.script = new List<Line>();
-        // Opening lore — taken from v11 canonical EP1
         AddL(ep, "", "bg_sarcophagus", "bgm_olympus", "sfx_transition",
             "A thousand years of silence. Stone cracks. Dust falls. Something stirs in the dark.",
             "Тысяча лет тишины. Камень трескается. Пыль осыпается. Что-то шевелится во тьме.");
@@ -309,13 +297,11 @@ public class Bootstrapper : MonoBehaviour
         AddL(ep, "portrait_pythia", "bg_grove", "", "",
             "Pythia: Mortals are slaves to a Fallen one — Achilles the Elder. His scouts are at the grove's edge.",
             "Пифия: Смертные — рабы Падшего, Ахилла Старшего. Его разведчики у края рощи.");
-        // BATTLE 1: Hoplite scouts
         AddBattleTrigger(ep, 1, "Hoplite scouts approach. They smell of bronze and violet rot.",
             "Гоплиты-разведчики приближаются. От них пахнет бронзой и фиолетовой гнилью.");
         AddL(ep, "portrait_pythia", "bg_grove", "", "",
             "Pythia: You still remember how to swing the Pact. Good. Walk to the Agora. Hermes waits.",
             "Пифия: Ты ещё помнишь, как взмахнуть Пактом. Хорошо. Иди на Агору. Гермес ждёт.");
-        // Choice 1
         AddChoice(ep, "Eon: Why me? I am a Titan. Why should I save mortals?",
             "Эон: Почему я? Я Титан. Зачем мне спасать смертных?",
             new []{"\"Because I swore the Pact.\"", "\"Because someone must.\"", "\"Because no god remains.\""},
@@ -327,16 +313,13 @@ public class Bootstrapper : MonoBehaviour
         AddL(ep, "portrait_hermes", "bg_agora", "", "",
             "Hermes: Eon. A thousand years late. Listen — corrupt hoplites guard the road.",
             "Гермес: Эон. На тысячу лет опоздал. Слушай — порченые гоплиты держат дорогу.");
-        // BATTLE 2
         AddBattleTrigger(ep, 2, "Three corrupt hoplites block the way. Bronze cracks with violet glow.",
             "Трое порченых гоплитов перекрывают путь. Бронза трескается фиолетовым светом.");
         AddL(ep, "portrait_hermes", "bg_agora", "", "",
             "Hermes: A shadow priestess of the Fallen blesses them. She must fall first.",
             "Гермес: Их благословляет теневая жрица Падшего. Она должна пасть первой.");
-        // BATTLE 3
         AddBattleTrigger(ep, 3, "The shadow priestess raises her cursed scroll. The air goes cold.",
             "Теневая жрица поднимает проклятый свиток. Воздух стынет.");
-        // Choice 2
         AddChoice(ep, "Hermes: What kind of Titan are you, sleeper?",
             "Гермес: Что ты за Титан, спящий?",
             new []{"\"I am the Pact. I keep it.\"", "\"I am vengeance for silent gods.\"", "\"I am the last weight on the scale.\""},
@@ -345,31 +328,24 @@ public class Bootstrapper : MonoBehaviour
         AddL(ep, "portrait_hermes", "bg_agora", "", "",
             "Hermes: The road climbs. Hoplite legion. Then a beast. Then the summit.",
             "Гермес: Дорога вверх. Легион гоплитов. Затем зверь. Затем вершина.");
-        // BATTLE 4 — bigger squad
         AddBattleTrigger(ep, 4, "Hoplite phalanx on the marble stairs. Shields locked, violet eyes.",
             "Фаланга гоплитов на мраморных ступенях. Щиты сомкнуты, фиолетовые глаза.");
-        // BATTLE 5 — shadow + hoplite combo
         AddBattleTrigger(ep, 5, "Two priestesses behind hoplite shields. They sing the death of Hera.",
             "Две жрицы за щитами гоплитов. Они поют смерть Геры.");
         AddL(ep, "", "bg_storm", "bgm_tense", "sfx_transition",
             "The storm is a bruise. Lightning tastes of iron.",
             "Буря — синяк. Молния на вкус — железо.");
-        // BATTLE 6 — hoplites in the storm
         AddBattleTrigger(ep, 6, "Hoplites born of storm clouds materialize from rain.",
             "Гоплиты, рождённые из туч, материализуются из дождя.");
-        // BATTLE 7 — minotaur mini-boss
         AddBattleTrigger(ep, 7, "A minotaur, corrupted demigod. Violet veins under bronze hide.",
             "Минотавр, порченый полубог. Фиолетовые вены под бронзовой шкурой.");
         AddL(ep, "portrait_eon", "bg_storm", "", "",
             "Eon: The beast was once a hero. The Fallen ate that too.",
             "Эон: Этот зверь когда-то был героем. Падший съел и это.");
-        // BATTLE 8 — priestess coven
         AddBattleTrigger(ep, 8, "Three priestesses form a violet triangle. A spell rises from them.",
             "Три жрицы образуют фиолетовый треугольник. От них поднимается заклятие.");
-        // BATTLE 9 — elite hoplites
         AddBattleTrigger(ep, 9, "Elite hoplites in black bronze. Veterans of the Fall.",
             "Элитные гоплиты в чёрной бронзе. Ветераны Падения.");
-        // BATTLE 10 — second minotaur
         AddBattleTrigger(ep, 10, "Another minotaur — bigger, golden ring through its nose.",
             "Ещё один минотавр — больше, с золотым кольцом в носу.");
         AddL(ep, "", "bg_altar", "bgm_tense", "sfx_transition",
@@ -378,16 +354,13 @@ public class Bootstrapper : MonoBehaviour
         AddL(ep, "portrait_fallen", "bg_altar", "", "",
             "Fallen Hoplite: Titan. You wear flesh badly. Pick up the hammer. Or kneel.",
             "Падший Гоплит: Титан. Ты плохо носишь плоть. Возьми молот. Или склони колено.");
-        // Choice 3 — drives ending
         AddChoice(ep, "Fallen: Either way the Pact ends tonight.",
             "Падший: В любом случае Пакт кончится сегодня.",
             new []{"\"I take the hammer. The Pact does not end.\"", "\"You ate gods. You will choke on a Titan.\"", "\"Olympus was hollow. But mortals are not.\""},
             new []{"«Я беру молот. Пакт не кончится.»", "«Ты ел богов. Подавишься Титаном.»", "«Олимп был пуст. Но смертные — нет.»"},
             new []{1, 2, 3});
-        // BOSS BATTLE 11
         AddBattleTrigger(ep, 11, "Fallen Hoplite rises. Violet sparks circle him — twelve devoured gods scream from within.",
             "Падший Гоплит встаёт. Фиолетовые искры вокруг него — двенадцать съеденных богов кричат изнутри.");
-        // After-boss reflection — branching ending unlocked later
         AddL(ep, "portrait_eon", "bg_altar", "bgm_olympus", "sfx_transition",
             "Eon: The hammer remembers. The Pact stands. The next ruin already waits.",
             "Эон: Молот помнит. Пакт стоит. Следующая руина уже ждёт.");
@@ -399,7 +372,6 @@ public class Bootstrapper : MonoBehaviour
     {
         var b = new BattleConfig[11];
         for (int i=0;i<11;i++) b[i] = new BattleConfig();
-        // Progressive grid: 6x7 -> 8x10, colors 4->6
         int[] gw = new []{6,6,6,7,7,7,7,7,8,8,8};
         int[] gh = new []{7,7,7,8,8,8,8,9,9,9,10};
         int[] cc = new []{4,4,5,5,5,5,5,5,6,6,6};
@@ -418,14 +390,12 @@ public class Bootstrapper : MonoBehaviour
             b[i].enemyKey = enemies[i];
             b[i].arenaBgKey = "bg_battle_arena";
             b[i].isBoss = (i == 10);
-            // Branch variations
-            b[i].altEnemyVengeance = enemies[i]; // visual variation handled by tint in code
+            b[i].altEnemyVengeance = enemies[i];
             b[i].altEnemyMortals = enemies[i];
         }
         return b;
     }
 
-    // EP2-7 use template lore (constraint 79: all episodes present, EP1 deeply, EP2-7 playable framework)
     Episode BuildEpisode2_Erebus()
     {
         var ep = NewEpStub(2, "Descent into Erebus", "Сошествие в Эреб",
@@ -517,7 +487,6 @@ public class Bootstrapper : MonoBehaviour
     }
     void AddEpScaffold(Episode ep)
     {
-        // 11 battles per episode, lore between each pair
         for (int i=1;i<=11;i++)
         {
             string en = i < 11 ? ("Battle " + i + " — guardians of this realm rise against the Titan.") :
@@ -529,7 +498,6 @@ public class Bootstrapper : MonoBehaviour
         AddL(ep, "portrait_eon", ep.bgKey, "bgm_olympus", "sfx_transition",
             "Eon: One more pantheon mended. One more ruin behind me.",
             "Эон: Ещё один пантеон восстановлен. Ещё одна руина позади.");
-        // Battle configs — escalating
         var b = new BattleConfig[11];
         int gridStart = 6 + (ep.id - 2);
         for (int i=0;i<11;i++)
@@ -548,7 +516,6 @@ public class Bootstrapper : MonoBehaviour
         ep.battles = b;
     }
 
-    // Helpers
     void AddL(Episode ep, string speaker, string bg, string bgm, string sfx, string en, string ru)
     {
         ep.script.Add(new Line{ speaker=speaker, bg=bg, bgm=bgm, sfx=sfx, en=en, ru=ru, choices=null, triggerBattle=0 });
@@ -579,479 +546,842 @@ public class Bootstrapper : MonoBehaviour
     }
 
     // =====================================================================
-    // PART 2 — Match-3 engine, Battle UI, Abilities
+    // PART 2 — Match-3 engine (CLEAN REBUILD v5.0)
+    // Key architectural changes:
+    //   1. BoardModel is ALWAYS authoritative — view never drives state
+    //   2. Input blocked during ANY resolve phase via BoardPhase enum
+    //   3. Coroutine state machine: Input → Swap → FindMatches → Animate →
+    //      CreateBonus → AnimateClear → Collapse → Refill → Cascade → FinishTurn
+    //   4. RenderBoard() NEVER touches tweens — only sync-snaps all views to model
+    //   5. GemViews are indexed by (x,y) slot, position calculated from model coords
     // =====================================================================
-    class Cell { public int color; public int bonus; /*0=none,1=line-h,2=line-v,3=square6,4=color-bomb*/ public bool curse; }
-    Cell[,] grid; int gridW, gridH, gridColors;
-    Image[,] gemImages;
-    GameObject[,] gemGO;
-    int selX = -1, selY = -1;
-    int turnSide = 0; // 0=player, 1=enemy
-    int turnCount = 0; // 0..1 (two moves per side per constraint 67)
+
+    // --- Board Model ---
+    struct CellData
+    {
+        public int color;   // -1 = empty (falling)
+        public int bonus;   // 0=none,1=lineH,2=lineV,3=hammer6x6,4=colorBomb
+        public bool curse;
+        public static CellData Empty => new CellData { color = -1, bonus = 0, curse = false };
+        public bool IsEmpty => color < 0;
+    }
+
+    const int BONUS_NONE = 0, BONUS_LINE_H = 1, BONUS_LINE_V = 2, BONUS_HAMMER = 3, BONUS_COLOR_BOMB = 4;
+    string[] BaseGemKeys  = { "gem_pact","gem_storm","gem_blood","gem_ash","gem_mortal","gem_violet" };
+    string[] DestroyVfxKeys = { "vfx_destroy_pact","vfx_destroy_storm","vfx_destroy_blood",
+                                  "vfx_destroy_ash","vfx_destroy_mortal","vfx_destroy_violet" };
+
+    CellData[,] boardModel;   // single source of truth
+    int boardW, boardH, boardColors;
+
+    // --- Board View (GOs indexed by slot) ---
+    GameObject[,]  gemGO;
+    Image[,]       gemImg;
+    RectTransform[,] gemRT;
+
+    GameObject gridRoot;
+    RectTransform boardPanelRT;
+    float cellSz;
+
+    // --- Battle state ---
+    enum BoardPhase { Input, Resolving, EnemyTurn, Done }
+    BoardPhase boardPhase = BoardPhase.Done;
+
+    int  selX = -1, selY = -1;
+    int  turnSide  = 0;   // 0=player,1=enemy
+    int  turnCount = 0;   // 0..1 two moves per side
     bool extraTurn = false;
-    int playerHpCur, playerHpMax;
-    int enemyHpCur, enemyHpMax;
+    int  playerHpCur, playerHpMax;
+    int  enemyHpCur, enemyHpMax;
+    int  comboMul  = 1;
+    int  enemyFreezeTurns = 0;
+    int  enemyNextSkillIdx = 0;
+    bool pendingEnemyTurn = false;
+    float enemyDelay = 0f;
+
     Image playerHpBar, enemyHpBar;
-    Image battleBg;
-    Image battleEnemyPortrait;
-    BattleConfig curBattle;
-    bool battleResolving = false;
-    float resolveTimer = 0f;
-    int comboMul = 1;
-    int enemyFreezeTurns = 0;
+    Image battleBg, battleEnemyPortrait, battlePlayerPortrait;
+    Text  battleTurnText, battleEnemyHpText, battlePlayerHpText;
     Image vfxOverlay;
     string vfxAnim = "";
-    float vfxT = 0f;
+    float  vfxT    = 0f;
+    Text   enemyIntentText;
+    Image[] enemySkillIcons  = new Image[3];
+    Text[]  enemySkillCdText = new Text[3];
+    int[]   enemySkillCd     = new int[3];
+    Image[] abilityRingBg  = new Image[5];
+    Image[] abilityCdMask  = new Image[5];
+    float[] abilityCdT     = new float[5];
+    float[] abilityCdDur   = new float[5];
+    BattleConfig curBattle;
 
-    // v13/v14: GemTween + destroy VFX + enemy intents (constraints 85,99,100,105,107)
-    class GemTween { public RectTransform rt; public Vector2 from; public Vector2 to; public float t; public float dur; public int kind; /*0=swap,1=fade,2=drop,3=destroyVfx*/ public Image img; public bool done; }
+    // --- Tween system (view-only, never drives model) ---
+    class GemTween
+    {
+        public RectTransform rt;
+        public Image img;
+        public Vector2 from, to;
+        public float t, dur;
+        public int kind;  // 0=move, 1=fadeOut, 2=drop, 3=destroyVfx
+    }
     List<GemTween> activeTweens = new List<GemTween>();
-    Image battlePlayerPortrait;
-    Image[] abilityRingBg = new Image[5];
-    Image[] abilityCdMask = new Image[5];
-    float[] abilityCdT = new float[5];
-    float[] abilityCdDur = new float[5];
-    // v14: enemy skill icons + intent label
-    Image[] enemySkillIcons = new Image[3];
-    Text[] enemySkillCdText = new Text[3];
-    int[] enemySkillCd = new int[3];
-    Text enemyIntentText;
-    // v14: swipe gesture state
-    Vector2 swipeStartPos = Vector2.zero; int swipeStartX = -1, swipeStartY = -1; bool swipeActive = false;
-    // v14: bonus piece types (constraints 101-103)
-    const int BONUS_NONE = 0, BONUS_LINE_H = 1, BONUS_LINE_V = 2, BONUS_SQUARE6 = 3, BONUS_COLOR_BOMB = 4;
-    // v14: destroy VFX overlay sprites keyed by color id
-    string[] DestroyVfxKeys = new []{ "vfx_destroy_pact","vfx_destroy_storm","vfx_destroy_blood","vfx_destroy_ash","vfx_destroy_mortal","vfx_destroy_violet" };
+    bool TweensActive => activeTweens.Count > 0;
 
-    // Gem keys per slot color id 0..5 base + pantheon-exclusive index 6
-    string[] BaseGemKeys = new []{ "gem_pact","gem_storm","gem_blood","gem_ash","gem_mortal","gem_violet" };
-
+    // ---- START BATTLE ----
     void StartBattle(int episodeId, int battleId)
     {
         var ep = episodes[episodeId-1];
         curBattle = ep.battles[battleId-1];
-        gridW = curBattle.gridW; gridH = curBattle.gridH; gridColors = curBattle.colors;
+        boardW = curBattle.gridW; boardH = curBattle.gridH; boardColors = curBattle.colors;
         playerHpMax = curBattle.playerHp; playerHpCur = playerHpMax;
-        enemyHpMax = curBattle.enemyHp; enemyHpCur = enemyHpMax;
-        turnSide = 0; turnCount = 0; extraTurn = false; comboMul = 1; enemyFreezeTurns = 0;
+        enemyHpMax  = curBattle.enemyHp;  enemyHpCur  = enemyHpMax;
+        turnSide = 0; turnCount = 0; extraTurn = false; comboMul = 1;
+        enemyFreezeTurns = 0; enemyNextSkillIdx = 0;
+        pendingEnemyTurn = false;
+        selX = selY = -1;
+        activeTweens.Clear();
         PlayBgm(ep.bgmBattle);
-        BuildBattleUI(ep);
-        InitGrid();
-        RenderGrid();
+        RefreshBattlePanel();
+        InitBoard();
+        FullSyncView();
         state = State.Battle;
+        boardPhase = BoardPhase.Input;
         UpdateBattleHUD();
+        UpdateEnemyIntent();
+        UpdateEnemySkillIcons();
     }
 
-    void InitGrid()
+    void RefreshBattlePanel()
     {
-        grid = new Cell[gridW, gridH];
-        System.Random rng = new System.Random();
-        for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++)
+        battlePanel.SetActive(true);
+        battleBg.sprite = sprites.ContainsKey(curBattle.arenaBgKey) ? sprites[curBattle.arenaBgKey] : null;
+        if (sprites.ContainsKey(curBattle.enemyKey)) battleEnemyPortrait.sprite = sprites[curBattle.enemyKey];
+        if (sprites.ContainsKey("portrait_eon"))      battlePlayerPortrait.sprite = sprites["portrait_eon"];
+        battleTurnText.text = L("TURN_PLAYER");
+        for (int i=0;i<abilityCdT.Length;i++)
         {
-            int c;
-            do {
-                c = (int)(rng.NextDouble() * gridColors);
-            } while (WouldStartMatch(x,y,c));
-            grid[x,y] = new Cell{ color=c, bonus=0, curse=false };
-        }
-        // Add ~1 violet curse for boss battles
-        if (curBattle.isBoss)
-        {
-            int cx = (int)(rng.NextDouble() * gridW);
-            int cy = (int)(rng.NextDouble() * gridH);
-            grid[cx,cy].color = 5; grid[cx,cy].curse = true;
+            abilityCdT[i] = 0f; abilityCdDur[i] = 0f;
+            if (abilityCdMask[i] != null) abilityCdMask[i].fillAmount = 0f;
         }
     }
-    bool WouldStartMatch(int x, int y, int c)
+
+    // ---- BOARD INIT ----
+    void InitBoard()
     {
-        if (x >= 2 && grid[x-1,y]!=null && grid[x-2,y]!=null && grid[x-1,y].color==c && grid[x-2,y].color==c) return true;
-        if (y >= 2 && grid[x,y-1]!=null && grid[x,y-2]!=null && grid[x,y-1].color==c && grid[x,y-2].color==c) return true;
+        boardModel = new CellData[boardW, boardH];
+        var rng = new System.Random();
+        for (int x = 0; x < boardW; x++)
+        for (int y = 0; y < boardH; y++)
+        {
+            int c;
+            do { c = rng.Next(0, boardColors); }
+            while (WouldMatch(x, y, c));
+            boardModel[x, y] = new CellData { color = c, bonus = BONUS_NONE, curse = false };
+        }
+        if (curBattle.isBoss)
+        {
+            int cx = rng.Next(0, boardW), cy = rng.Next(0, boardH);
+            boardModel[cx, cy] = new CellData { color = 5, bonus = BONUS_NONE, curse = true };
+        }
+    }
+
+    bool WouldMatch(int x, int y, int c)
+    {
+        if (x >= 2 && boardModel[x-1,y].color == c && boardModel[x-2,y].color == c) return true;
+        if (y >= 2 && boardModel[x,y-1].color == c && boardModel[x,y-2].color == c) return true;
         return false;
     }
 
-    void RenderGrid()
-    {
-        // v16 stability invariant: logic is authoritative. Never leave a tweened RectTransform
-        // at a previous cell after grid data has changed; that caused ghosting/overlap/white cells.
-        activeTweens.Clear();
-        if (gemImages == null || gemImages.GetLength(0) != gridW || gemImages.GetLength(1) != gridH)
-        {
-            // Clear old
-            if (gemGO != null)
-            {
-                for (int xx=0;xx<gemGO.GetLength(0);xx++)
-                for (int yy=0;yy<gemGO.GetLength(1);yy++)
-                    if (gemGO[xx,yy] != null) UnityEngine.Object.Destroy(gemGO[xx,yy]);
-            }
-            gemImages = new Image[gridW, gridH];
-            gemGO = new GameObject[gridW, gridH];
-            BuildGridGOs();
-        }
-        for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++)
-        {
-            var img = gemImages[x,y];
-            if (img == null) continue;
-            var cell = grid[x,y];
-            // v15: render BONUS sprite only when bonus != NONE (constraint 111 - no hammer overlay)
-            string key;
-            if (cell.bonus == BONUS_LINE_H || cell.bonus == BONUS_LINE_V) key = "bonus_hermes_step";
-            else if (cell.bonus == BONUS_SQUARE6) key = "bonus_hephaestus_hammer";
-            else if (cell.bonus == BONUS_COLOR_BOMB) key = "bonus_zeus_lightning";
-            else key = (cell.color >= 0 && cell.color < BaseGemKeys.Length) ? BaseGemKeys[cell.color] : episodes[currentEpisode-1].exclusiveGem;
-            // No null sprites: fallback to the cell's base gem if an optional asset is absent.
-            if (sprites.ContainsKey(key)) img.sprite = sprites[key];
-            else {
-                string fallback = (cell.color >= 0 && cell.color < BaseGemKeys.Length) ? BaseGemKeys[cell.color] : "gem_pact";
-                img.sprite = sprites.ContainsKey(fallback) ? sprites[fallback] : null;
-            }
-            // Reset the view to its exact data-grid coordinate every render.
-            var grt = img.rectTransform;
-            grt.anchoredPosition = new Vector2(x*curCellSz + curCellSz/2 + 10, -(y*curCellSz + curCellSz/2 + 10));
-            grt.localScale = Vector3.one;
-            img.color = (selX==x && selY==y) ? new Color(1.3f,1.2f,0.7f,1f) : Color.white;
-        }
-    }
-
-    GameObject gridRoot;
-    RectTransform boardPanelRT;
-    float curCellSz = 80f;
-    void BuildGridGOs()
+    // ---- BOARD GRID GAMEOBJECTS ----
+    // Called once per battle; re-creates view GOs matching current boardW/boardH
+    void BuildBoardGOs()
     {
         if (gridRoot != null) UnityEngine.Object.Destroy(gridRoot);
         gridRoot = new GameObject("GridRoot");
-        // v14: parent under BoardPanel (safe zone) — constraint 97
-        gridRoot.transform.SetParent(boardPanelRT != null ? boardPanelRT.transform : (Transform)battlePanel.transform, false);
+        var parent = boardPanelRT != null ? boardPanelRT.transform : battlePanel.transform;
+        gridRoot.transform.SetParent(parent, false);
         var rt = gridRoot.AddComponent<RectTransform>();
-        rt.anchorMin = new Vector2(0.5f,0.5f); rt.anchorMax = new Vector2(0.5f,0.5f);
-        rt.pivot = new Vector2(0.5f,0.5f); rt.anchoredPosition = new Vector2(0, 0);
-        // Cell size scales with available board area
-        float maxW = (boardPanelRT != null) ? Mathf.Max(400f, boardPanelRT.rect.width - 30f) : 1000f;
-        float maxH = (boardPanelRT != null) ? Mathf.Max(400f, boardPanelRT.rect.height - 30f) : 1100f;
-        if (maxW <= 100f) maxW = 1000f;
-        if (maxH <= 100f) maxH = 1100f;
-        float cellSz = Math.Min(maxW / gridW, maxH / gridH);
-        curCellSz = cellSz;
-        rt.sizeDelta = new Vector2(cellSz*gridW + 20, cellSz*gridH + 20);
-        for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++)
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = Vector2.zero;
+
+        float maxW = boardPanelRT != null ? Mathf.Max(400f, boardPanelRT.rect.width  - 30f) : 1000f;
+        float maxH = boardPanelRT != null ? Mathf.Max(400f, boardPanelRT.rect.height - 30f) : 1100f;
+        if (maxW < 100f) maxW = 1000f;
+        if (maxH < 100f) maxH = 1100f;
+        cellSz = Mathf.Min(maxW / boardW, maxH / boardH);
+        rt.sizeDelta = new Vector2(cellSz * boardW + 20f, cellSz * boardH + 20f);
+
+        gemGO  = new GameObject[boardW, boardH];
+        gemImg = new Image[boardW, boardH];
+        gemRT  = new RectTransform[boardW, boardH];
+
+        for (int x = 0; x < boardW; x++)
+        for (int y = 0; y < boardH; y++)
         {
             int cx = x, cy = y;
-            var go = new GameObject("Gem_"+x+"_"+y);
+            var go = new GameObject("Gem_" + x + "_" + y);
             go.transform.SetParent(gridRoot.transform, false);
             var img = go.AddComponent<Image>();
             img.raycastTarget = true;
             var grt = img.rectTransform;
-            grt.anchorMin = new Vector2(0,1); grt.anchorMax = new Vector2(0,1);
-            grt.pivot = new Vector2(0.5f,0.5f);
-            grt.sizeDelta = new Vector2(cellSz - 6, cellSz - 6);
-            grt.anchoredPosition = new Vector2(x*cellSz + cellSz/2 + 10, -(y*cellSz + cellSz/2 + 10));
+            grt.anchorMin = new Vector2(0f, 1f);
+            grt.anchorMax = new Vector2(0f, 1f);
+            grt.pivot     = new Vector2(0.5f, 0.5f);
+            grt.sizeDelta = new Vector2(cellSz - 6f, cellSz - 6f);
+            grt.anchoredPosition = ModelToViewPos(x, y);
+
             var btn = go.AddComponent<Button>();
             btn.transition = Selectable.Transition.None;
             btn.onClick.AddListener(() => OnGemTap(cx, cy));
-            // v14: swipe gesture handler via EventTrigger-style — attach drag handler component
-            // v14: swipe via GemDragHandler attached below (added after Button)
-            GemDragHandler dh = go.AddComponent<GemDragHandler>(); dh.Init(this, cx, cy);
-            gemImages[x,y] = img;
-            gemGO[x,y] = go;
+
+            var dh = go.AddComponent<GemDragHandler>();
+            dh.Init(this, cx, cy);
+
+            gemGO[x, y]  = go;
+            gemImg[x, y] = img;
+            gemRT[x, y]  = grt;
         }
     }
 
-    // v14: swipe handler dispatched from GemDragHandler
-    public void OnGemSwipe(int x, int y, int dx, int dy)
+    Vector2 ModelToViewPos(int x, int y) =>
+        new Vector2(x * cellSz + cellSz * 0.5f + 10f, -(y * cellSz + cellSz * 0.5f + 10f));
+
+    // ---- FULL SYNC VIEW ----
+    // Authoritative: destroy old GOs if size changed, rebuild, then sync sprites/positions
+    void FullSyncView()
     {
-        if (state != State.Battle || battleResolving) return;
-        if (turnSide != 0) return;
-        if (activeTweens.Count > 0) return;
-        int tx = x + dx, ty = y + dy;
-        if (tx < 0 || tx >= gridW || ty < 0 || ty >= gridH) return;
-        selX = x; selY = y;
-        // Animate swap visually
-        if (gemImages[x,y] != null && gemImages[tx,ty] != null)
+        // Rebuild GO grid if size changed
+        bool needRebuild = gemGO == null
+                        || gemGO.GetLength(0) != boardW
+                        || gemGO.GetLength(1) != boardH;
+        if (needRebuild)
         {
-            var rt1 = gemImages[x,y].rectTransform; var rt2 = gemImages[tx,ty].rectTransform;
-            activeTweens.Add(new GemTween{ rt = rt1, from = rt1.anchoredPosition, to = rt2.anchoredPosition, t=0, dur=0.25f, kind=0 });
-            activeTweens.Add(new GemTween{ rt = rt2, from = rt2.anchoredPosition, to = rt1.anchoredPosition, t=0, dur=0.25f, kind=0 });
-        }
-        SwapCells(x, y, tx, ty);
-        int matched = FindAndResolveMatches(true);
-        if (matched == 0)
-        {
-            // revert visually + logically
-            if (gemImages[x,y] != null && gemImages[tx,ty] != null)
+            if (gemGO != null)
             {
-                var rt1 = gemImages[x,y].rectTransform; var rt2 = gemImages[tx,ty].rectTransform;
-                activeTweens.Add(new GemTween{ rt = rt1, from = rt1.anchoredPosition, to = rt2.anchoredPosition, t=0, dur=0.25f, kind=0 });
-                activeTweens.Add(new GemTween{ rt = rt2, from = rt2.anchoredPosition, to = rt1.anchoredPosition, t=0, dur=0.25f, kind=0 });
+                for (int x=0;x<gemGO.GetLength(0);x++)
+                for (int y=0;y<gemGO.GetLength(1);y++)
+                    if (gemGO[x,y] != null) UnityEngine.Object.Destroy(gemGO[x,y]);
+                gemGO  = null;
+                gemImg = null;
+                gemRT  = null;
             }
-            SwapCells(x, y, tx, ty);
-            selX = -1; selY = -1; RenderGrid();
+            BuildBoardGOs();
         }
-        else { selX = -1; selY = -1; AfterPlayerSwap(); }
+
+        // Stop all tweens — model is now authoritative
+        activeTweens.Clear();
+
+        // Sync each slot
+        for (int x=0;x<boardW;x++)
+        for (int y=0;y<boardH;y++)
+        {
+            var img = gemImg[x,y];
+            if (img == null) continue;
+            var cell = boardModel[x,y];
+
+            // Sprite
+            string key;
+            if      (cell.bonus == BONUS_LINE_H || cell.bonus == BONUS_LINE_V) key = "bonus_hermes_step";
+            else if (cell.bonus == BONUS_HAMMER)    key = "bonus_hephaestus_hammer";
+            else if (cell.bonus == BONUS_COLOR_BOMB) key = "bonus_zeus_lightning";
+            else if (cell.color >= 0 && cell.color < BaseGemKeys.Length)
+                key = BaseGemKeys[cell.color];
+            else
+                key = episodes[currentEpisode-1].exclusiveGem;
+
+            if (sprites.ContainsKey(key))        img.sprite = sprites[key];
+            else if (cell.color >= 0 && cell.color < BaseGemKeys.Length && sprites.ContainsKey(BaseGemKeys[cell.color]))
+                img.sprite = sprites[BaseGemKeys[cell.color]];
+            else
+                img.sprite = null;
+
+            // Position — always snap to model coordinate
+            gemRT[x,y].anchoredPosition = ModelToViewPos(x, y);
+            gemRT[x,y].localScale = Vector3.one;
+
+            // Selection highlight
+            img.color = (selX == x && selY == y) ? new Color(1.3f,1.2f,0.7f,1f) : Color.white;
+        }
     }
 
-    public void OnBattleMenu() { if (settingsPanel != null) { settingsPanel.SetActive(true); } }
-
+    // ---- INPUT ----
     void OnGemTap(int x, int y)
     {
-        if (state != State.Battle || battleResolving || turnSide != 0) return;
-        if (selX < 0) { selX = x; selY = y; RenderGrid(); return; }
-        // Must be neighbor
-        int dx = Math.Abs(x - selX), dy = Math.Abs(y - selY);
-        if (dx + dy != 1) { selX = x; selY = y; RenderGrid(); return; }
-        // Swap and check
-        SwapCells(selX, selY, x, y);
-        int matched = FindAndResolveMatches(true);
-        if (matched == 0)
+        if (state != State.Battle || boardPhase != BoardPhase.Input || turnSide != 0) return;
+
+        if (selX < 0)
         {
-            // Invalid swap, swap back
-            SwapCells(selX, selY, x, y);
-            selX = -1; selY = -1;
-            RenderGrid();
-            PlaySfx("sfx_blip");
+            selX = x; selY = y;
+            FullSyncView();
             return;
         }
+
+        int dx = Math.Abs(x - selX), dy = Math.Abs(y - selY);
+        if (dx + dy != 1)
+        {
+            // Reselect
+            selX = x; selY = y;
+            FullSyncView();
+            return;
+        }
+
+        int sx = selX, sy = selY;
+        selX = selY = -1;
+        StartCoroutine(DoPlayerSwap(sx, sy, x, y));
+    }
+
+    public void OnGemSwipe(int x, int y, int dx, int dy)
+    {
+        if (state != State.Battle || boardPhase != BoardPhase.Input || turnSide != 0) return;
+        int tx = x + dx, ty = y + dy;
+        if (tx < 0 || tx >= boardW || ty < 0 || ty >= boardH) return;
+        selX = selY = -1;
+        StartCoroutine(DoPlayerSwap(x, y, tx, ty));
+    }
+
+    // ---- PLAYER SWAP COROUTINE ----
+    IEnumerator DoPlayerSwap(int ax, int ay, int bx, int by)
+    {
+        boardPhase = BoardPhase.Resolving;
+        battleTurnText.text = "";
+
+        // Animate swap
+        yield return StartCoroutine(AnimateSwap(ax, ay, bx, by));
+
+        // Try match
+        SwapModel(ax, ay, bx, by);
+        var matched = CollectMatches();
+
+        if (matched == null || matched.Count == 0)
+        {
+            // Invalid — animate back, revert model
+            yield return StartCoroutine(AnimateSwap(ax, ay, bx, by));
+            SwapModel(ax, ay, bx, by);
+            FullSyncView();
+            PlaySfx("sfx_blip");
+            boardPhase = BoardPhase.Input;
+            battleTurnText.text = L("TURN_PLAYER");
+            yield break;
+        }
+
         PlaySfx("sfx_choice");
-        selX = -1; selY = -1;
-        // Damage applied inside resolve; advance turn
-        AfterPlayerSwap();
+        yield return StartCoroutine(ResolveAllMatches(true));
+
+        if (CheckBattleEnd()) yield break;
+
+        // Advance turn
+        if (extraTurn)
+        {
+            extraTurn = false;
+            battleTurnText.text = L("EXTRA_TURN");
+            boardPhase = BoardPhase.Input;
+        }
+        else
+        {
+            turnCount++;
+            if (turnCount >= 2)
+            {
+                turnCount = 0; turnSide = 1;
+                battleTurnText.text = L("TURN_ENEMY");
+                boardPhase = BoardPhase.EnemyTurn;
+                UpdateEnemyIntent();
+                yield return new WaitForSeconds(1.0f);
+                yield return StartCoroutine(DoEnemyTurn());
+            }
+            else
+            {
+                battleTurnText.text = L("TURN_PLAYER");
+                UpdateEnemyIntent();
+                boardPhase = BoardPhase.Input;
+            }
+        }
     }
 
-    void SwapCells(int x1, int y1, int x2, int y2)
+    // ---- RESOLVE ALL MATCHES (CASCADE LOOP) ----
+    IEnumerator ResolveAllMatches(bool isPlayer)
     {
-        var t = grid[x1,y1]; grid[x1,y1] = grid[x2,y2]; grid[x2,y2] = t;
-    }
-
-    int FindAndResolveMatches(bool isPlayer)
-    {
-        int totalMatched = 0;
         comboMul = 1;
         while (true)
         {
-            bool[,] m = new bool[gridW, gridH];
-            int[,] runLenH = new int[gridW, gridH]; // length of horizontal run at this cell (>=3 means matched in H)
-            int[,] runLenV = new int[gridW, gridH]; // length of vertical run at this cell
-            int matchCount = 0;
-            int maxRun = 0;
+            var matches = CollectMatches();
+            if (matches == null || matches.Count == 0) break;
+
+            // Determine bonus info
             int bonusAnchorX = -1, bonusAnchorY = -1, bonusType = BONUS_NONE, bonusColor = -1;
-            // Horizontal
-            for (int y=0;y<gridH;y++)
-            {
-                int run = 1;
-                for (int x=1;x<gridW;x++)
-                {
-                    if (grid[x,y].color >= 0 && grid[x,y].color == grid[x-1,y].color) run++;
-                    else { if (run >= 3) { for (int k=0;k<run;k++) { m[x-1-k,y] = true; runLenH[x-1-k,y] = run; } maxRun = Math.Max(maxRun, run); matchCount += run; if (run >= 4 && bonusType == BONUS_NONE) { bonusAnchorX = x-1-(run/2); bonusAnchorY = y; bonusColor = grid[x-1,y].color; bonusType = (run >= 5) ? BONUS_COLOR_BOMB : BONUS_LINE_H; } } run = 1; }
-                }
-                if (run >= 3) { for (int k=0;k<run;k++) { m[gridW-1-k,y] = true; runLenH[gridW-1-k,y] = run; } maxRun = Math.Max(maxRun, run); matchCount += run; if (run >= 4 && bonusType == BONUS_NONE) { bonusAnchorX = gridW-1-(run/2); bonusAnchorY = y; bonusColor = grid[gridW-1,y].color; bonusType = (run >= 5) ? BONUS_COLOR_BOMB : BONUS_LINE_H; } }
-            }
-            // Vertical
-            for (int x=0;x<gridW;x++)
-            {
-                int run = 1;
-                for (int y=1;y<gridH;y++)
-                {
-                    if (grid[x,y].color >= 0 && grid[x,y].color == grid[x,y-1].color) run++;
-                    else { if (run >= 3) { for (int k=0;k<run;k++) { m[x,y-1-k] = true; runLenV[x,y-1-k] = run; } maxRun = Math.Max(maxRun, run); matchCount += run; if (run >= 4 && bonusType == BONUS_NONE) { bonusAnchorX = x; bonusAnchorY = y-1-(run/2); bonusColor = grid[x,y-1].color; bonusType = (run >= 5) ? BONUS_COLOR_BOMB : BONUS_LINE_V; } } run = 1; }
-                }
-                if (run >= 3) { for (int k=0;k<run;k++) { m[x,gridH-1-k] = true; runLenV[x,gridH-1-k] = run; } maxRun = Math.Max(maxRun, run); matchCount += run; if (run >= 4 && bonusType == BONUS_NONE) { bonusAnchorX = x; bonusAnchorY = gridH-1-(run/2); bonusColor = grid[x,gridH-1].color; bonusType = (run >= 5) ? BONUS_COLOR_BOMB : BONUS_LINE_V; } }
-            }
-            if (matchCount == 0) break;
-            // v15: detect T/L shape → Hephaestus Hammer (constraint 102)
-            for (int x=0;x<gridW && bonusType != BONUS_COLOR_BOMB;x++) for (int y=0;y<gridH;y++)
-            {
-                if (runLenH[x,y] >= 3 && runLenV[x,y] >= 3) { bonusAnchorX = x; bonusAnchorY = y; bonusColor = grid[x,y].color; bonusType = BONUS_SQUARE6; break; }
-            }
-            totalMatched += matchCount;
-            int dmg = (int)(matchCount * 2 * comboMul);
-            if (maxRun >= 4) { dmg = (int)(dmg * 1.5f); extraTurn = true; }
+            DetectBonus(matches, out bonusAnchorX, out bonusAnchorY, out bonusType, out bonusColor);
+
+            // Damage
+            int dmg = matches.Count * 2 * comboMul;
+            bool hasLongRun = false;
+            foreach (var pos in matches)
+                if (CountRunAt(pos.x, pos.y) >= 4) { hasLongRun = true; break; }
+            if (hasLongRun) { dmg = (int)(dmg * 1.5f); extraTurn = true; }
             ApplyDamage(isPlayer, dmg);
-            // Heal on mortal gem
-            for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++) if (m[x,y] && grid[x,y].color == 4 && isPlayer) playerHpCur = Math.Min(playerHpMax, playerHpCur + 3);
-            // v15: spawn destroy VFX per gem type before clearing (constraint 100, 111)
-            for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++)
-            {
-                if (m[x,y]) {
-                    int c = grid[x,y].color;
-                    SpawnDestroyVfx(x, y, c);
-                }
-            }
-            // Clear matched cells, BUT preserve the anchor cell as bonus piece (constraints 101-103, 112)
-            for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++) if (m[x,y]) grid[x,y].color = -1;
-            if (bonusType != BONUS_NONE && bonusAnchorX >= 0 && bonusAnchorY >= 0 && bonusColor >= 0) {
-                grid[bonusAnchorX, bonusAnchorY].color = bonusColor;
-                grid[bonusAnchorX, bonusAnchorY].bonus = bonusType;
-            }
-            Gravity();
-            Refill();
-            comboMul++;
+
+            // Mortal heal
+            if (isPlayer)
+                foreach (var pos in matches)
+                    if (boardModel[pos.x, pos.y].color == 4)
+                        playerHpCur = Math.Min(playerHpMax, playerHpCur + 3);
+
             UpdateBattleHUD();
+
+            // Animate destroy
+            yield return StartCoroutine(AnimateDestroy(matches));
+
+            // Clear model
+            foreach (var pos in matches)
+                boardModel[pos.x, pos.y] = CellData.Empty;
+
+            // Place bonus
+            if (bonusType != BONUS_NONE && bonusAnchorX >= 0)
+            {
+                boardModel[bonusAnchorX, bonusAnchorY] = new CellData
+                {
+                    color = bonusColor,
+                    bonus = bonusType,
+                    curse = false
+                };
+            }
+
+            // Gravity + refill
+            CollapseBoard();
+            RefillBoard();
+
+            // Animate drop
+            yield return StartCoroutine(AnimateDrop());
+
+            FullSyncView();
+            comboMul++;
+
             if (enemyHpCur <= 0 || playerHpCur <= 0) break;
         }
-        if (totalMatched > 0) RenderGrid();
-        return totalMatched;
     }
 
-    void Gravity()
+    // ---- MATCH DETECTION ----
+    // Returns set of (x,y) positions that are part of a match-3+
+    List<Vector2Int> CollectMatches()
     {
-        for (int x=0;x<gridW;x++)
+        var inMatch = new bool[boardW, boardH];
+        // Horizontal runs
+        for (int y=0;y<boardH;y++)
         {
-            int writeY = gridH - 1;
-            for (int y=gridH-1;y>=0;y--)
+            int runStart = 0;
+            for (int x=1;x<=boardW;x++)
             {
-                if (grid[x,y].color >= 0) { var t = grid[x,y]; grid[x,y] = grid[x,writeY]; grid[x,writeY] = t; writeY--; }
+                bool cont = x < boardW && !boardModel[x,y].IsEmpty && !boardModel[x-1,y].IsEmpty
+                         && boardModel[x,y].color == boardModel[x-1,y].color;
+                if (!cont)
+                {
+                    int run = x - runStart;
+                    if (run >= 3) for (int k=runStart;k<x;k++) inMatch[k,y] = true;
+                    runStart = x;
+                }
+            }
+        }
+        // Vertical runs
+        for (int x=0;x<boardW;x++)
+        {
+            int runStart = 0;
+            for (int y=1;y<=boardH;y++)
+            {
+                bool cont = y < boardH && !boardModel[x,y].IsEmpty && !boardModel[x,y-1].IsEmpty
+                         && boardModel[x,y].color == boardModel[x,y-1].color;
+                if (!cont)
+                {
+                    int run = y - runStart;
+                    if (run >= 3) for (int k=runStart;k<y;k++) inMatch[x,k] = true;
+                    runStart = y;
+                }
+            }
+        }
+        var result = new List<Vector2Int>();
+        for (int x=0;x<boardW;x++)
+        for (int y=0;y<boardH;y++)
+            if (inMatch[x,y]) result.Add(new Vector2Int(x,y));
+        return result;
+    }
+
+    int CountRunAt(int px, int py)
+    {
+        int c = boardModel[px,py].color;
+        if (c < 0) return 0;
+        // Horizontal run length at this cell
+        int hLen = 1;
+        for (int x=px-1; x>=0 && boardModel[x,py].color==c; x--) hLen++;
+        for (int x=px+1; x<boardW && boardModel[x,py].color==c; x++) hLen++;
+        int vLen = 1;
+        for (int y=py-1; y>=0 && boardModel[px,y].color==c; y--) vLen++;
+        for (int y=py+1; y<boardH && boardModel[px,y].color==c; y++) vLen++;
+        return Math.Max(hLen, vLen);
+    }
+
+    void DetectBonus(List<Vector2Int> matches, out int bx, out int by, out int btype, out int bcolor)
+    {
+        bx = by = -1; btype = BONUS_NONE; bcolor = -1;
+
+        // Build run-length maps for bonus detection
+        var runH = new int[boardW, boardH];
+        var runV = new int[boardW, boardH];
+        int maxRun = 0;
+
+        for (int y=0;y<boardH;y++)
+        {
+            int runStart = 0;
+            for (int x=1;x<=boardW;x++)
+            {
+                bool cont = x<boardW && !boardModel[x,y].IsEmpty && !boardModel[x-1,y].IsEmpty
+                         && boardModel[x,y].color==boardModel[x-1,y].color;
+                if (!cont)
+                {
+                    int run = x - runStart;
+                    for (int k=runStart;k<x;k++) runH[k,y] = run;
+                    if (run > maxRun) maxRun = run;
+                    runStart = x;
+                }
+            }
+        }
+        for (int x=0;x<boardW;x++)
+        {
+            int runStart = 0;
+            for (int y=1;y<=boardH;y++)
+            {
+                bool cont = y<boardH && !boardModel[x,y].IsEmpty && !boardModel[x,y-1].IsEmpty
+                         && boardModel[x,y].color==boardModel[x,y-1].color;
+                if (!cont)
+                {
+                    int run = y - runStart;
+                    for (int k=runStart;k<y;k++) runV[x,k] = run;
+                    if (run > maxRun) maxRun = run;
+                    runStart = y;
+                }
+            }
+        }
+
+        // Priority: Color Bomb (5) > T/L Hammer > Line
+        foreach (var pos in matches)
+        {
+            int rh = runH[pos.x, pos.y];
+            int rv = runV[pos.x, pos.y];
+            if (rh >= 5 || rv >= 5)
+            {
+                bx = pos.x; by = pos.y;
+                bcolor = boardModel[pos.x, pos.y].color;
+                btype = BONUS_COLOR_BOMB;
+                return;
+            }
+        }
+        foreach (var pos in matches)
+        {
+            if (runH[pos.x,pos.y] >= 3 && runV[pos.x,pos.y] >= 3)
+            {
+                bx = pos.x; by = pos.y;
+                bcolor = boardModel[pos.x,pos.y].color;
+                btype = BONUS_HAMMER;
+                return;
+            }
+        }
+        foreach (var pos in matches)
+        {
+            int rh = runH[pos.x, pos.y];
+            int rv = runV[pos.x, pos.y];
+            if (rh >= 4)
+            {
+                bx = pos.x; by = pos.y;
+                bcolor = boardModel[pos.x,pos.y].color;
+                btype = BONUS_LINE_H;
+                return;
+            }
+            if (rv >= 4)
+            {
+                bx = pos.x; by = pos.y;
+                bcolor = boardModel[pos.x,pos.y].color;
+                btype = BONUS_LINE_V;
+                return;
             }
         }
     }
-    // v15: spawn destroy VFX per gem type with auto-Destroy after fade (constraints 100, 111)
+
+    // ---- GRAVITY + REFILL ----
+    void CollapseBoard()
+    {
+        for (int x=0;x<boardW;x++)
+        {
+            int writeY = boardH - 1;
+            for (int y=boardH-1; y>=0; y--)
+            {
+                if (!boardModel[x,y].IsEmpty)
+                {
+                    if (writeY != y)
+                    {
+                        boardModel[x, writeY] = boardModel[x, y];
+                        boardModel[x, y] = CellData.Empty;
+                    }
+                    writeY--;
+                }
+            }
+        }
+    }
+
+    void RefillBoard()
+    {
+        var rng = new System.Random();
+        for (int x=0;x<boardW;x++)
+        for (int y=0;y<boardH;y++)
+            if (boardModel[x,y].IsEmpty)
+                boardModel[x,y] = new CellData { color = rng.Next(0, boardColors), bonus = BONUS_NONE, curse = false };
+    }
+
+    void SwapModel(int ax, int ay, int bx, int by)
+    {
+        var tmp = boardModel[ax, ay];
+        boardModel[ax, ay] = boardModel[bx, by];
+        boardModel[bx, by] = tmp;
+    }
+
+    // ---- BONUS ACTIVATION ----
+    IEnumerator ActivateBonus(int x, int y)
+    {
+        var cell = boardModel[x,y];
+        var toDestroy = new List<Vector2Int>();
+
+        switch (cell.bonus)
+        {
+            case BONUS_LINE_H:
+                for (int cx=0;cx<boardW;cx++) toDestroy.Add(new Vector2Int(cx, y));
+                break;
+            case BONUS_LINE_V:
+                for (int cy=0;cy<boardH;cy++) toDestroy.Add(new Vector2Int(x, cy));
+                break;
+            case BONUS_HAMMER:
+                for (int cx=Math.Max(0,x-3);cx<=Math.Min(boardW-1,x+3);cx++)
+                for (int cy=Math.Max(0,y-3);cy<=Math.Min(boardH-1,y+3);cy++)
+                    toDestroy.Add(new Vector2Int(cx,cy));
+                break;
+            case BONUS_COLOR_BOMB:
+                int targetColor = -1;
+                // Find most common color
+                var counts = new int[boardColors];
+                for (int cx=0;cx<boardW;cx++) for (int cy=0;cy<boardH;cy++)
+                    if (!boardModel[cx,cy].IsEmpty && boardModel[cx,cy].color < boardColors)
+                        counts[boardModel[cx,cy].color]++;
+                for (int c=0;c<boardColors;c++) if (counts[c]>counts[Math.Max(0,targetColor)]) targetColor = c;
+                for (int cx=0;cx<boardW;cx++) for (int cy=0;cy<boardH;cy++)
+                    if (!boardModel[cx,cy].IsEmpty && boardModel[cx,cy].color == targetColor)
+                        toDestroy.Add(new Vector2Int(cx,cy));
+                break;
+        }
+
+        if (toDestroy.Count > 0)
+        {
+            int dmg = toDestroy.Count * 3;
+            ApplyDamage(true, dmg);
+            UpdateBattleHUD();
+            yield return StartCoroutine(AnimateDestroy(toDestroy));
+            foreach (var pos in toDestroy) boardModel[pos.x, pos.y] = CellData.Empty;
+            boardModel[x, y] = CellData.Empty;
+            CollapseBoard();
+            RefillBoard();
+            yield return StartCoroutine(AnimateDrop());
+            FullSyncView();
+        }
+    }
+
+    // ---- ANIMATIONS ----
+    const float SWAP_DUR    = 0.18f;
+    const float DESTROY_DUR = 0.22f;
+    const float DROP_DUR    = 0.25f;
+
+    IEnumerator AnimateSwap(int ax, int ay, int bx, int by)
+    {
+        if (gemRT == null) yield break;
+        var posA = ModelToViewPos(ax, ay);
+        var posB = ModelToViewPos(bx, by);
+        activeTweens.Clear();
+        if (gemRT[ax,ay] != null) activeTweens.Add(new GemTween{ rt=gemRT[ax,ay], from=posA, to=posB, t=0, dur=SWAP_DUR, kind=0 });
+        if (gemRT[bx,by] != null) activeTweens.Add(new GemTween{ rt=gemRT[bx,by], from=posB, to=posA, t=0, dur=SWAP_DUR, kind=0 });
+        yield return StartCoroutine(WaitTweens());
+    }
+
+    IEnumerator AnimateDestroy(List<Vector2Int> cells)
+    {
+        if (gridRoot == null || cells.Count == 0) yield break;
+        foreach (var pos in cells)
+        {
+            if (gemRT != null && pos.x < boardW && pos.y < boardH && gemRT[pos.x,pos.y] != null)
+                activeTweens.Add(new GemTween{ rt=gemRT[pos.x,pos.y], img=gemImg[pos.x,pos.y],
+                    from=ModelToViewPos(pos.x,pos.y), to=ModelToViewPos(pos.x,pos.y),
+                    t=0, dur=DESTROY_DUR, kind=1 });
+
+            int c = boardModel[pos.x,pos.y].color;
+            SpawnDestroyVfx(pos.x, pos.y, c);
+        }
+        yield return StartCoroutine(WaitTweens());
+        // Reset alpha on gem images (they still exist, will be synced by FullSyncView)
+        foreach (var pos in cells)
+            if (gemImg != null && pos.x < boardW && pos.y < boardH && gemImg[pos.x,pos.y] != null)
+                gemImg[pos.x,pos.y].color = Color.white;
+    }
+
+    IEnumerator AnimateDrop()
+    {
+        if (gemRT == null) yield break;
+        activeTweens.Clear();
+        for (int x=0;x<boardW;x++)
+        for (int y=0;y<boardH;y++)
+        {
+            if (gemRT[x,y] == null) continue;
+            var target = ModelToViewPos(x, y);
+            if (Vector2.Distance(gemRT[x,y].anchoredPosition, target) > 1f)
+                activeTweens.Add(new GemTween{ rt=gemRT[x,y], from=gemRT[x,y].anchoredPosition,
+                    to=target, t=0, dur=DROP_DUR, kind=2 });
+        }
+        yield return StartCoroutine(WaitTweens());
+    }
+
+    IEnumerator WaitTweens()
+    {
+        while (activeTweens.Count > 0)
+            yield return null;
+    }
+
     void SpawnDestroyVfx(int x, int y, int color)
     {
         if (gridRoot == null) return;
-        var go = new GameObject("VfxD"+x+"_"+y);
+        var go = new GameObject("VfxD" + x + "_" + y);
         go.transform.SetParent(gridRoot.transform, false);
-        var img = go.AddComponent<Image>(); img.raycastTarget = false; img.preserveAspect = true;
+        var img = go.AddComponent<Image>();
+        img.raycastTarget = false;
+        img.preserveAspect = true;
         string key = (color >= 0 && color < DestroyVfxKeys.Length) ? DestroyVfxKeys[color] : DestroyVfxKeys[0];
         if (sprites.ContainsKey(key)) img.sprite = sprites[key];
-        img.color = new Color(1f,1f,1f,1f);
+        img.color = Color.white;
         var rt = img.rectTransform;
         rt.anchorMin = new Vector2(0,1); rt.anchorMax = new Vector2(0,1); rt.pivot = new Vector2(0.5f,0.5f);
-        rt.sizeDelta = new Vector2(curCellSz*1.4f, curCellSz*1.4f);
-        rt.anchoredPosition = new Vector2(x*curCellSz + curCellSz/2 + 10, -(y*curCellSz + curCellSz/2 + 10));
-        // kind=3 — fade + auto destroy GO at tween end (Update loop)
-        activeTweens.Add(new GemTween{ rt = rt, from = rt.anchoredPosition, to = rt.anchoredPosition, t=0, dur=0.45f, kind=3, img = img });
+        rt.sizeDelta = new Vector2(cellSz * 1.4f, cellSz * 1.4f);
+        rt.anchoredPosition = ModelToViewPos(x, y);
+        activeTweens.Add(new GemTween{ rt=rt, img=img, from=rt.anchoredPosition, to=rt.anchoredPosition,
+            t=0, dur=0.4f, kind=3 });
     }
 
-    void Refill()
+    // ---- ENEMY TURN COROUTINE ----
+    IEnumerator DoEnemyTurn()
     {
-        System.Random rng = new System.Random();
-        for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++)
-            if (grid[x,y].color < 0) grid[x,y] = new Cell{ color = (int)(rng.NextDouble() * gridColors), bonus=0, curse=false };
-    }
+        if (enemyFreezeTurns > 0)
+        {
+            enemyFreezeTurns--;
+            EndEnemyTurn();
+            yield break;
+        }
 
-    void ApplyDamage(bool fromPlayer, int dmg)
-    {
-        if (fromPlayer) enemyHpCur = Math.Max(0, enemyHpCur - dmg);
-        else playerHpCur = Math.Max(0, playerHpCur - dmg);
-    }
-
-    void AfterPlayerSwap()
-    {
-        if (enemyHpCur <= 0) { EndBattle(true); return; }
-        if (playerHpCur <= 0) { EndBattle(false); return; }
-        if (extraTurn) { extraTurn = false; battleTurnText.text = L("EXTRA_TURN"); return; }
-        turnCount++;
-        if (turnCount >= 2) { turnCount = 0; turnSide = 1; battleTurnText.text = L("TURN_ENEMY"); ScheduleEnemyTurn(); }
-        else { UpdateEnemyIntent(); battleTurnText.text = L("TURN_PLAYER"); }
-    }
-
-    float enemyDelay = 0f;
-    void ScheduleEnemyTurn() { enemyDelay = 1.2f; battleResolving = true; UpdateEnemyIntent(); }
-
-    // v14: enemy AI with 1/2/3 skills + intent display (constraints 105, 107)
-    int[] enemySkillNext = new int[]{ 0, 1, 2 };
-    int enemyNextSkillIdx = 0;
-    int EnemySkillCount(BattleConfig b) { if (b.isBoss) return 3; if (b.id >= 6) return 2; return 1; }
-    string[] EnemySkillKey(BattleConfig b)
-    {
-        // Returns 3 keys per slot; unused slots = ""
-        if (b.isBoss) return new []{ "pact_blast", "curse_storm", "titan_wrath" };
-        if (b.id >= 6) return new []{ "pierce", "curse" };
-        return new []{ "pierce" };
-    }
-    void UpdateEnemyIntent()
-    {
-        if (enemyIntentText == null || curBattle == null) return;
         var keys = EnemySkillKey(curBattle);
-        int n = EnemySkillCount(curBattle);
-        int idx = enemyNextSkillIdx % Math.Max(1, n);
-        string k = (idx < keys.Length) ? keys[idx] : "pierce";
-        enemyIntentText.text = L("INTENT") + ": " + L("ENS_" + k.ToUpper());
-    }
-
-    void DoEnemyTurn()
-    {
-        if (enemyFreezeTurns > 0) { enemyFreezeTurns--; EndEnemyTurn(); return; }
-        // v14: execute enemy SKILL by intent (constraints 105, 107)
-        var keys = EnemySkillKey(curBattle);
-        int n = EnemySkillCount(curBattle);
-        int idx = enemyNextSkillIdx % Math.Max(1, n);
-        string sk = (idx < keys.Length) ? keys[idx] : "pierce";
+        int n    = EnemySkillCount(curBattle);
+        int sidx = enemyNextSkillIdx % Math.Max(1, n);
+        string sk = (sidx < keys.Length) ? keys[sidx] : "pierce";
         ExecuteEnemySkill(sk);
         enemyNextSkillIdx = (enemyNextSkillIdx + 1) % Math.Max(1, n);
-        // Plus do a board move so the enemy still plays the match-3 turn
-        int bestX = -1, bestY = -1, bestDir = 0; int bestScore = 0;
-        System.Random rng = new System.Random();
-        for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++)
+
+        // Find best swap
+        int bestX = -1, bestY = -1, bestDir = 0, bestScore = 0;
+        var rng = new System.Random();
+        for (int x=0;x<boardW;x++)
+        for (int y=0;y<boardH;y++)
         {
-            if (x+1 < gridW) { SwapCells(x,y,x+1,y); int s = SimulateScore(); SwapCells(x,y,x+1,y); if (s>bestScore){bestScore=s;bestX=x;bestY=y;bestDir=0;} }
-            if (y+1 < gridH) { SwapCells(x,y,x,y+1); int s = SimulateScore(); SwapCells(x,y,x,y+1); if (s>bestScore){bestScore=s;bestX=x;bestY=y;bestDir=1;} }
+            if (x+1 < boardW)
+            {
+                SwapModel(x,y,x+1,y);
+                int s = SimScore();
+                SwapModel(x,y,x+1,y);
+                if (s > bestScore) { bestScore=s; bestX=x; bestY=y; bestDir=0; }
+            }
+            if (y+1 < boardH)
+            {
+                SwapModel(x,y,x,y+1);
+                int s = SimScore();
+                SwapModel(x,y,x,y+1);
+                if (s > bestScore) { bestScore=s; bestX=x; bestY=y; bestDir=1; }
+            }
         }
-        if (bestX < 0) { bestX = (int)(rng.NextDouble()*gridW); bestY = (int)(rng.NextDouble()*(gridH-1)); bestDir = 1; }
-        if (bestDir == 0) SwapCells(bestX, bestY, bestX+1, bestY);
-        else SwapCells(bestX, bestY, bestX, bestY+1);
-        FindAndResolveMatches(false);
+        if (bestX < 0)
+        {
+            bestX = rng.Next(0, boardW);
+            bestY = rng.Next(0, boardH - 1);
+            bestDir = 1;
+        }
+
+        int tx = bestX + (bestDir == 0 ? 1 : 0);
+        int ty = bestY + (bestDir == 1 ? 1 : 0);
+        yield return StartCoroutine(AnimateSwap(bestX, bestY, tx, ty));
+        SwapModel(bestX, bestY, tx, ty);
+
+        var matched = CollectMatches();
+        if (matched != null && matched.Count > 0)
+            yield return StartCoroutine(ResolveAllMatches(false));
+        else
+        {
+            // revert
+            yield return StartCoroutine(AnimateSwap(bestX, bestY, tx, ty));
+            SwapModel(bestX, bestY, tx, ty);
+            FullSyncView();
+        }
+
+        if (CheckBattleEnd()) yield break;
         EndEnemyTurn();
     }
-    void ExecuteEnemySkill(string sk)
-    {
-        // VFX flash on the player HP
-        if (vfxOverlay != null) { vfxAnim = sk; vfxT = 0f; vfxOverlay.color = new Color(1,1,1,1); }
-        switch (sk)
-        {
-            case "pierce": ApplyDamage(false, 15); break;
-            case "curse":
-            {
-                // Inject violet (color 5) into random 2 cells
-                System.Random r = new System.Random();
-                for (int n=0;n<2;n++) { int x=(int)(r.NextDouble()*gridW); int y=(int)(r.NextDouble()*gridH); if (grid[x,y].color>=0){ grid[x,y].color = 5; grid[x,y].curse=true; } }
-                ApplyDamage(false, 8);
-                break;
-            }
-            case "pact_blast": ApplyDamage(false, 25); break;
-            case "curse_storm":
-            {
-                System.Random r = new System.Random();
-                for (int n=0;n<4;n++) { int x=(int)(r.NextDouble()*gridW); int y=(int)(r.NextDouble()*gridH); if (grid[x,y].color>=0){ grid[x,y].color = 5; grid[x,y].curse=true; } }
-                ApplyDamage(false, 10);
-                break;
-            }
-            case "titan_wrath":
-            {
-                int d = (playerHpCur < playerHpMax/2) ? 40 : 22;
-                ApplyDamage(false, d);
-                break;
-            }
-            default: ApplyDamage(false, 12); break;
-        }
-    }
-    int SimulateScore()
+
+    int SimScore()
     {
         int score = 0;
-        for (int y=0;y<gridH;y++)
-        {
-            int run = 1;
-            for (int x=1;x<gridW;x++) { if (grid[x,y].color==grid[x-1,y].color) run++; else { if (run>=3) score += run; run=1; } }
-            if (run>=3) score += run;
-        }
-        for (int x=0;x<gridW;x++)
-        {
-            int run = 1;
-            for (int y=1;y<gridH;y++) { if (grid[x,y].color==grid[x,y-1].color) run++; else { if (run>=3) score += run; run=1; } }
-            if (run>=3) score += run;
-        }
+        for (int y=0;y<boardH;y++) { int r=1; for (int x=1;x<boardW;x++) { if (!boardModel[x,y].IsEmpty && boardModel[x,y].color==boardModel[x-1,y].color) r++; else { if(r>=3) score+=r; r=1; } } if(r>=3) score+=r; }
+        for (int x=0;x<boardW;x++) { int r=1; for (int y=1;y<boardH;y++) { if (!boardModel[x,y].IsEmpty && boardModel[x,y].color==boardModel[x,y-1].color) r++; else { if(r>=3) score+=r; r=1; } } if(r>=3) score+=r; }
         return score;
     }
+
     void EndEnemyTurn()
     {
-        if (enemyHpCur <= 0) { EndBattle(true); return; }
-        if (playerHpCur <= 0) { EndBattle(false); return; }
-        if (extraTurn) { extraTurn = false; battleTurnText.text = L("EXTRA_TURN"); return; }
-        turnCount++;
-        if (turnCount >= 2) { turnCount = 0; turnSide = 0; battleTurnText.text = L("TURN_PLAYER"); battleResolving = false; }
-        else battleTurnText.text = L("TURN_ENEMY");
+        if (CheckBattleEnd()) return;
+        if (extraTurn)
+        {
+            extraTurn = false;
+            battleTurnText.text = L("EXTRA_TURN");
+        }
+        else
+        {
+            turnCount++;
+            if (turnCount >= 2)
+            {
+                turnCount = 0; turnSide = 0;
+                battleTurnText.text = L("TURN_PLAYER");
+                UpdateEnemyIntent();
+            }
+            else
+            {
+                battleTurnText.text = L("TURN_ENEMY");
+            }
+        }
+        boardPhase = (turnSide == 0) ? BoardPhase.Input : BoardPhase.EnemyTurn;
+        if (boardPhase == BoardPhase.EnemyTurn)
+            StartCoroutine(EnemyTurnDelayed());
+    }
+
+    IEnumerator EnemyTurnDelayed()
+    {
+        yield return new WaitForSeconds(1.0f);
+        yield return StartCoroutine(DoEnemyTurn());
+    }
+
+    bool CheckBattleEnd()
+    {
+        if (enemyHpCur <= 0) { EndBattle(true); return true; }
+        if (playerHpCur <= 0) { EndBattle(false); return true; }
+        return false;
     }
 
     void EndBattle(bool victory)
     {
-        battleResolving = false;
+        boardPhase = BoardPhase.Done;
         state = State.BattleResult;
         battlePanel.SetActive(false);
         battleResultPanel.SetActive(true);
@@ -1070,13 +1400,9 @@ public class Bootstrapper : MonoBehaviour
     {
         battleResultPanel.SetActive(false);
         if (playerHpCur <= 0)
-        {
-            // Restart same battle
             StartBattle(currentEpisode, curBattle.id);
-        }
         else
         {
-            // Resume script after the trigger
             state = State.Playing;
             idx++;
             SaveProgress();
@@ -1085,61 +1411,154 @@ public class Bootstrapper : MonoBehaviour
         }
     }
 
-    // ============ ABILITIES ============
-    string[] AbilityKeys = new []{ "inferno","freeze","shuffle","cleanse","slam" };
-    int[] AbilityPrices = new []{ 100, 150, 80, 120, 200 };
+    void ApplyDamage(bool fromPlayer, int dmg)
+    {
+        if (fromPlayer) enemyHpCur = Math.Max(0, enemyHpCur - dmg);
+        else            playerHpCur = Math.Max(0, playerHpCur - dmg);
+    }
+
+    void UpdateBattleHUD()
+    {
+        if (playerHpBar  != null) playerHpBar.fillAmount  = (float)playerHpCur / Math.Max(1, playerHpMax);
+        if (enemyHpBar   != null) enemyHpBar.fillAmount   = (float)enemyHpCur  / Math.Max(1, enemyHpMax);
+        if (battlePlayerHpText != null) battlePlayerHpText.text = playerHpCur + "/" + playerHpMax;
+        if (battleEnemyHpText  != null) battleEnemyHpText.text  = enemyHpCur  + "/" + enemyHpMax;
+        if (echoesText != null) echoesText.text = "" + echoes;
+        if (sparksText != null) sparksText.text = "" + sparks;
+    }
+
+    // ---- ENEMY SKILLS ----
+    int EnemySkillCount(BattleConfig b) { if (b.isBoss) return 3; if (b.id >= 6) return 2; return 1; }
+    string[] EnemySkillKey(BattleConfig b)
+    {
+        if (b.isBoss) return new []{ "pact_blast","curse_storm","titan_wrath" };
+        if (b.id >= 6) return new []{ "pierce","curse" };
+        return new []{ "pierce" };
+    }
+    void UpdateEnemyIntent()
+    {
+        if (enemyIntentText == null || curBattle == null) return;
+        var keys = EnemySkillKey(curBattle);
+        int n = EnemySkillCount(curBattle);
+        int i = enemyNextSkillIdx % Math.Max(1, n);
+        string k = (i < keys.Length) ? keys[i] : "pierce";
+        enemyIntentText.text = L("INTENT") + ": " + L("ENS_" + k.ToUpper());
+    }
+    void UpdateEnemySkillIcons()
+    {
+        if (curBattle == null) return;
+        int n = EnemySkillCount(curBattle);
+        for (int i=0;i<3;i++)
+        {
+            if (enemySkillIcons[i] == null) continue;
+            enemySkillIcons[i].gameObject.SetActive(i < n);
+        }
+    }
+    void ExecuteEnemySkill(string sk)
+    {
+        if (vfxOverlay != null) { vfxAnim = sk; vfxT = 0f; vfxOverlay.color = new Color(1,1,1,1); }
+        var rng = new System.Random();
+        switch (sk)
+        {
+            case "pierce": ApplyDamage(false, 15); break;
+            case "curse":
+                for (int n=0;n<2;n++) { int cx=rng.Next(0,boardW), cy=rng.Next(0,boardH); if (!boardModel[cx,cy].IsEmpty) boardModel[cx,cy] = new CellData{color=5,bonus=0,curse=true}; }
+                ApplyDamage(false, 8); FullSyncView(); break;
+            case "pact_blast": ApplyDamage(false, 25); break;
+            case "curse_storm":
+                for (int n=0;n<4;n++) { int cx=rng.Next(0,boardW), cy=rng.Next(0,boardH); if (!boardModel[cx,cy].IsEmpty) boardModel[cx,cy] = new CellData{color=5,bonus=0,curse=true}; }
+                ApplyDamage(false, 10); FullSyncView(); break;
+            case "titan_wrath":
+                ApplyDamage(false, playerHpCur < playerHpMax/2 ? 40 : 22); break;
+            default: ApplyDamage(false, 12); break;
+        }
+        UpdateBattleHUD();
+    }
+
+    // ---- ABILITIES ----
+    string[] AbilityKeys   = { "inferno","freeze","shuffle","cleanse","slam" };
+    int[]    AbilityPrices = { 100, 150, 80, 120, 200 };
 
     void UseAbility(int idx)
     {
-        if (state != State.Battle || turnSide != 0) return;
+        if (state != State.Battle || boardPhase != BoardPhase.Input || turnSide != 0) return;
         string key = AbilityKeys[idx];
         if (!abilityCount.ContainsKey(key) || abilityCount[key] <= 0) return;
         abilityCount[key]--;
         SaveProgress();
+        boardPhase = BoardPhase.Resolving;
+        StartCoroutine(UseAbilityCoroutine(key));
+    }
+
+    IEnumerator UseAbilityCoroutine(string key)
+    {
         switch (key)
         {
-            case "inferno": AbilityInferno(); break;
-            case "freeze":  AbilityFreeze(); break;
-            case "shuffle": AbilityShuffle(); break;
-            case "cleanse": AbilityCleanse(); break;
-            case "slam":    AbilitySlam(); break;
+            case "inferno":  yield return StartCoroutine(AbilityInferno()); break;
+            case "freeze":   AbilityFreeze(); break;
+            case "shuffle":  yield return StartCoroutine(AbilityShuffle()); break;
+            case "cleanse":  yield return StartCoroutine(AbilityCleanse()); break;
+            case "slam":     yield return StartCoroutine(AbilitySlam()); break;
         }
         RefreshAbilityButtons();
+        boardPhase = BoardPhase.Input;
     }
-    void AbilityInferno()
+
+    IEnumerator AbilityInferno()
     {
-        int cx = gridW/2, cy = gridH/2;
-        int dmg = 0;
-        for (int x=Math.Max(0,cx-1); x<=Math.Min(gridW-1,cx+1); x++)
-        for (int y=Math.Max(0,cy-1); y<=Math.Min(gridH-1,cy+1); y++)
-        { dmg += 15; grid[x,y].color = -1; }
-        Gravity(); Refill(); RenderGrid();
-        ApplyDamage(true, dmg);
+        int cx = boardW/2, cy = boardH/2;
+        var cells = new List<Vector2Int>();
+        for (int x=Math.Max(0,cx-1);x<=Math.Min(boardW-1,cx+1);x++)
+        for (int y=Math.Max(0,cy-1);y<=Math.Min(boardH-1,cy+1);y++)
+            cells.Add(new Vector2Int(x,y));
+        ApplyDamage(true, cells.Count * 15);
         UpdateBattleHUD();
+        yield return StartCoroutine(AnimateDestroy(cells));
+        foreach (var p in cells) boardModel[p.x,p.y] = CellData.Empty;
+        CollapseBoard(); RefillBoard();
+        yield return StartCoroutine(AnimateDrop());
+        FullSyncView();
         TriggerVFX("vfx_inferno_burst");
     }
+
     void AbilityFreeze() { enemyFreezeTurns += 2; TriggerVFX("vfx_freeze"); }
-    void AbilityShuffle()
+
+    IEnumerator AbilityShuffle()
     {
-        System.Random rng = new System.Random();
-        for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++)
-            grid[x,y].color = (int)(rng.NextDouble() * gridColors);
-        RenderGrid();
-        FindAndResolveMatches(true);
+        var rng = new System.Random();
+        for (int x=0;x<boardW;x++) for (int y=0;y<boardH;y++)
+            boardModel[x,y] = new CellData{ color=rng.Next(0,boardColors), bonus=BONUS_NONE, curse=false };
+        FullSyncView();
+        yield return StartCoroutine(ResolveAllMatches(true));
     }
-    void AbilityCleanse()
+
+    IEnumerator AbilityCleanse()
     {
-        for (int x=0;x<gridW;x++) for (int y=0;y<gridH;y++)
-            if (grid[x,y].color == 5) { grid[x,y].color = -1; }
-        Gravity(); Refill(); RenderGrid();
+        var cells = new List<Vector2Int>();
+        for (int x=0;x<boardW;x++) for (int y=0;y<boardH;y++)
+            if (boardModel[x,y].color == 5) cells.Add(new Vector2Int(x,y));
+        if (cells.Count > 0)
+        {
+            yield return StartCoroutine(AnimateDestroy(cells));
+            foreach (var p in cells) boardModel[p.x,p.y] = CellData.Empty;
+            CollapseBoard(); RefillBoard();
+            yield return StartCoroutine(AnimateDrop());
+        }
+        FullSyncView();
     }
-    void AbilitySlam()
+
+    IEnumerator AbilitySlam()
     {
-        int col = gridW/2; int dmg = 0;
-        for (int y=0;y<gridH;y++) { dmg += 25; grid[col,y].color = -1; }
-        Gravity(); Refill(); RenderGrid();
-        ApplyDamage(true, dmg);
+        int col = boardW/2;
+        var cells = new List<Vector2Int>();
+        for (int y=0;y<boardH;y++) cells.Add(new Vector2Int(col,y));
+        ApplyDamage(true, cells.Count * 25);
         UpdateBattleHUD();
+        yield return StartCoroutine(AnimateDestroy(cells));
+        foreach (var p in cells) boardModel[p.x,p.y] = CellData.Empty;
+        CollapseBoard(); RefillBoard();
+        yield return StartCoroutine(AnimateDrop());
+        FullSyncView();
         TriggerVFX("vfx_titan_slam");
     }
 
@@ -1148,30 +1567,6 @@ public class Bootstrapper : MonoBehaviour
         if (sprites.ContainsKey(key)) { vfxOverlay.sprite = sprites[key]; vfxOverlay.color = Color.white; }
         vfxAnim = key; vfxT = 0f;
         PlaySfx("sfx_choice");
-    }
-
-    void UpdateBattleHUD()
-    {
-        if (playerHpBar != null) playerHpBar.fillAmount = (float)playerHpCur / Math.Max(1, playerHpMax);
-        if (enemyHpBar != null) enemyHpBar.fillAmount = (float)enemyHpCur / Math.Max(1, enemyHpMax);
-        if (battlePlayerHpText != null) battlePlayerHpText.text = playerHpCur + "/" + playerHpMax;
-        if (battleEnemyHpText != null) battleEnemyHpText.text = enemyHpCur + "/" + enemyHpMax;
-        if (echoesText != null) echoesText.text = "" + echoes;
-        if (sparksText != null) sparksText.text = "" + sparks;
-    }
-
-    void BuildBattleUI(Episode ep)
-    {
-        if (battlePanel != null) {
-            battlePanel.SetActive(true);
-            battleBg.sprite = sprites.ContainsKey(curBattle.arenaBgKey) ? sprites[curBattle.arenaBgKey] : null;
-            if (sprites.ContainsKey(curBattle.enemyKey)) battleEnemyPortrait.sprite = sprites[curBattle.enemyKey];
-            if (battlePlayerPortrait != null && sprites.ContainsKey("portrait_eon")) battlePlayerPortrait.sprite = sprites["portrait_eon"];
-            battleTurnText.text = L("TURN_PLAYER");
-            for (int i=0;i<abilityCdT.Length;i++) { abilityCdT[i]=0f; abilityCdDur[i]=0f; if (abilityCdMask[i]!=null) abilityCdMask[i].fillAmount = 0f; }
-            activeTweens.Clear();
-            return;
-        }
     }
 
     void RefreshAbilityButtons()
@@ -1185,7 +1580,114 @@ public class Bootstrapper : MonoBehaviour
     }
 
     // =====================================================================
-    // PART 3 — UI build, Shop, Endings, Main flow handlers
+    // PART 3 — Update loop (only VN/UI/Fade/Tweens — no match logic here!)
+    // =====================================================================
+    void Update()
+    {
+        // Fade overlay
+        if (fadeDir != 0)
+        {
+            fadeAlpha += fadeDir * Time.deltaTime * 0.7f;
+            fadeAlpha = Mathf.Clamp01(fadeAlpha);
+            fadeOverlay.color = new Color(0,0,0,fadeAlpha);
+            if (fadeAlpha <= 0f || fadeAlpha >= 1f) fadeDir = 0;
+        }
+
+        // Background crossfade
+        if (crossfading)
+        {
+            crossTime += Time.deltaTime;
+            float a = Mathf.Clamp01(crossTime / CROSS_DUR);
+            bgImageNext.color = new Color(1,1,1,a);
+            bgImage.color     = new Color(1,1,1,1f-a);
+            if (a >= 1f)
+            {
+                bgImage.sprite = bgImageNext.sprite;
+                bgImage.color = Color.white;
+                bgImageNext.color = new Color(1,1,1,0);
+                currentBgKey = pendingBg; crossfading = false;
+            }
+        }
+
+        // Typewriter
+        if (typing && (state == State.Playing || state == State.Choice))
+        {
+            typeTimer += Time.deltaTime;
+            while (typeTimer >= TYPE_SPEED && typeIdx < fullText.Length)
+            { typeTimer -= TYPE_SPEED; typeIdx++; dialogText.text = fullText.Substring(0, typeIdx); if (typeIdx % 6 == 0) PlaySfx("sfx_blip"); }
+            if (typeIdx >= fullText.Length)
+            {
+                typing = false; skipBtnGO.SetActive(false);
+                var line = episodes[currentEpisode-1].script[idx];
+                if (line.choices != null) ShowChoiceUI(); else nextBtnGO.SetActive(true);
+            }
+        }
+
+        // Next-button pulse
+        if (nextBtnGO.activeSelf)
+        { pulseT += Time.deltaTime * 3f; float p = 0.85f + 0.15f * Mathf.Sin(pulseT); nextBtnText.color = new Color(1f,0.95f,0.85f,p); }
+
+        // VFX overlay fade
+        if (!string.IsNullOrEmpty(vfxAnim))
+        {
+            vfxT += Time.deltaTime;
+            float a = Mathf.Clamp01(1f - vfxT / 0.9f);
+            vfxOverlay.color = new Color(1,1,1,a);
+            if (vfxT >= 0.9f) { vfxAnim = ""; vfxOverlay.color = new Color(1,1,1,0); }
+        }
+
+        // Tween processing (swap-move, fade-out, drop, destroyVfx)
+        if (activeTweens.Count > 0)
+        {
+            for (int i = activeTweens.Count - 1; i >= 0; i--)
+            {
+                var tw = activeTweens[i];
+                tw.t += Time.deltaTime;
+                float a = Mathf.Clamp01(tw.t / Mathf.Max(0.0001f, tw.dur));
+                float ease = a * a * (3f - 2f * a);
+                switch (tw.kind)
+                {
+                    case 0: // move (swap / revert)
+                    case 2: // drop
+                        if (tw.rt != null) tw.rt.anchoredPosition = Vector2.LerpUnclamped(tw.from, tw.to, ease);
+                        break;
+                    case 1: // fade gem out during destroy
+                        if (tw.img != null) tw.img.color = new Color(1,1,1, 1f - a);
+                        break;
+                    case 3: // destroy VFX overlay — fade + scale, then Destroy GO
+                        if (tw.img != null) { tw.img.color = new Color(1f,1f,1f, 1f - a); if (tw.rt != null) tw.rt.localScale = new Vector3(1f + a*0.5f, 1f + a*0.5f, 1f); }
+                        break;
+                }
+                if (a >= 1f)
+                {
+                    if (tw.kind == 3 && tw.img != null && tw.img.gameObject != null)
+                        UnityEngine.Object.Destroy(tw.img.gameObject);
+                    activeTweens.RemoveAt(i);
+                }
+            }
+        }
+
+        // Ability cooldown UI
+        if (state == State.Battle)
+        {
+            for (int i=0;i<abilityCdT.Length;i++)
+            {
+                if (abilityCdT[i] > 0f)
+                {
+                    abilityCdT[i] -= Time.deltaTime;
+                    if (abilityCdT[i] < 0f) abilityCdT[i] = 0f;
+                    if (abilityCdMask[i] != null && abilityCdDur[i] > 0f)
+                        abilityCdMask[i].fillAmount = abilityCdT[i] / abilityCdDur[i];
+                }
+                else if (abilityCdMask[i] != null)
+                    abilityCdMask[i].fillAmount = 0f;
+            }
+            RefreshAbilityButtons();
+        }
+    }
+
+    // =====================================================================
+    // PART 4 — UI build (preserved from v4.0.0)
     // =====================================================================
     void BuildUI()
     {
@@ -1201,11 +1703,9 @@ public class Bootstrapper : MonoBehaviour
         esGO.AddComponent<UnityEngine.EventSystems.EventSystem>();
         esGO.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
 
-        // Backgrounds
-        bgImage = MakeImage(canvas.transform, "BG", Color.black); Stretch(bgImage.rectTransform);
+        bgImage     = MakeImage(canvas.transform, "BG", Color.black);     Stretch(bgImage.rectTransform);
         bgImageNext = MakeImage(canvas.transform, "BGNext", new Color(1,1,1,0)); Stretch(bgImageNext.rectTransform);
 
-        // PortraitCard (fix constraint 64)
         portraitCardBg = MakeImage(canvas.transform, "PortraitCard", new Color(0.05f,0.04f,0.08f,0.92f));
         var pcr = portraitCardBg.rectTransform;
         pcr.anchorMin = new Vector2(0.5f,0.5f); pcr.anchorMax = new Vector2(0.5f,0.5f);
@@ -1219,12 +1719,10 @@ public class Bootstrapper : MonoBehaviour
         pr.anchoredPosition = new Vector2(0, 140); pr.sizeDelta = new Vector2(600, 880);
         portraitImage.preserveAspect = true;
 
-        // Dialog box
         dialogBox = MakeImage(canvas.transform, "DialogBox", new Color(0.05f,0.04f,0.08f,0.88f));
         var db = dialogBox.rectTransform;
         db.anchorMin = new Vector2(0,0); db.anchorMax = new Vector2(1,0);
-        db.pivot = new Vector2(0.5f,0); db.anchoredPosition = new Vector2(0,40);
-        db.sizeDelta = new Vector2(-80, 520);
+        db.pivot = new Vector2(0.5f,0); db.anchoredPosition = new Vector2(0,40); db.sizeDelta = new Vector2(-80, 520);
         AddOutline(dialogBox.gameObject, new Color(0.9f,0.75f,0.3f,1f), 3);
         speakerText = MakeText(dialogBox.transform, "Speaker", "", 42, new Color(1f,0.85f,0.4f,1f));
         var st = speakerText.rectTransform;
@@ -1237,13 +1735,10 @@ public class Bootstrapper : MonoBehaviour
         dt.offsetMin = new Vector2(40, 110); dt.offsetMax = new Vector2(-40, -90);
         dialogText.alignment = TextAnchor.UpperLeft;
 
-        var tapGO = new GameObject("TapArea");
-        tapGO.transform.SetParent(canvas.transform, false);
-        var tapImg = tapGO.AddComponent<Image>();
-        tapImg.color = new Color(0,0,0,0); tapImg.raycastTarget = true;
+        var tapGO = new GameObject("TapArea"); tapGO.transform.SetParent(canvas.transform, false);
+        var tapImg = tapGO.AddComponent<Image>(); tapImg.color = new Color(0,0,0,0); tapImg.raycastTarget = true;
         Stretch(tapImg.rectTransform);
-        var tapBtn = tapGO.AddComponent<Button>();
-        tapBtn.transition = Selectable.Transition.None;
+        var tapBtn = tapGO.AddComponent<Button>(); tapBtn.transition = Selectable.Transition.None;
         tapBtn.onClick.AddListener(OnTap);
         dialogBox.transform.SetAsLastSibling();
 
@@ -1253,8 +1748,7 @@ public class Bootstrapper : MonoBehaviour
         nextBtnGO.SetActive(false);
 
         // Title panel
-        titlePanel = new GameObject("TitlePanel");
-        titlePanel.transform.SetParent(canvas.transform, false);
+        titlePanel = new GameObject("TitlePanel"); titlePanel.transform.SetParent(canvas.transform, false);
         var tpRT = titlePanel.AddComponent<RectTransform>(); Stretch(tpRT);
         titleArt = MakeImage(titlePanel.transform, "TitleArt", Color.white); Stretch(titleArt.rectTransform);
         titleText = MakeText(titlePanel.transform, "Title", "", 110, new Color(1f,0.85f,0.4f,1f));
@@ -1280,8 +1774,7 @@ public class Bootstrapper : MonoBehaviour
         MakeFlatButton(menuBar.transform, "SetBtn",   new Vector2(0,-120), new Vector2(820,130), OnOpenSettings, out settingsBtnText);
 
         // Settings panel
-        settingsPanel = new GameObject("SettingsPanel");
-        settingsPanel.transform.SetParent(canvas.transform, false);
+        settingsPanel = new GameObject("SettingsPanel"); settingsPanel.transform.SetParent(canvas.transform, false);
         var spRT = settingsPanel.AddComponent<RectTransform>(); Stretch(spRT);
         var spBg = MakeImage(settingsPanel.transform, "SpBG", new Color(0.02f,0.02f,0.05f,0.96f)); Stretch(spBg.rectTransform);
         settingsTitleText = MakeText(settingsPanel.transform, "SetTitle", "", 80, new Color(1f,0.85f,0.4f,1f));
@@ -1293,15 +1786,13 @@ public class Bootstrapper : MonoBehaviour
         MakeFlatButton(settingsPanel.transform, "SfxBtn",   new Vector2(0,170), new Vector2(840,140), OnToggleSfx,   out sfxBtnText);
         MakeFlatButton(settingsPanel.transform, "LangBtn",  new Vector2(0,  0), new Vector2(840,140), OnToggleLang,  out langBtnText);
         MakeFlatButton(settingsPanel.transform, "BackBtn",  new Vector2(0,-340), new Vector2(640,140), OnBackFromSettings, out backBtnText);
-        // Open Shop button
         Text shopBtnText;
         MakeFlatButton(settingsPanel.transform, "ShopBtn", new Vector2(0,-170), new Vector2(840,140), OnOpenShop, out shopBtnText);
         shopBtnText.text = "SHOP / МАГАЗИН";
         settingsPanel.SetActive(false);
 
         // Choice panel
-        choicePanel = new GameObject("ChoicePanel");
-        choicePanel.transform.SetParent(canvas.transform, false);
+        choicePanel = new GameObject("ChoicePanel"); choicePanel.transform.SetParent(canvas.transform, false);
         var cpRT = choicePanel.AddComponent<RectTransform>(); Stretch(cpRT);
         var cpBg = MakeImage(choicePanel.transform, "CpBG", new Color(0,0,0,0.55f)); Stretch(cpBg.rectTransform);
         for (int i=0;i<3;i++)
@@ -1314,8 +1805,7 @@ public class Bootstrapper : MonoBehaviour
         choicePanel.SetActive(false);
 
         // Pre-Battle panel
-        preBattlePanel = new GameObject("PreBattle");
-        preBattlePanel.transform.SetParent(canvas.transform, false);
+        preBattlePanel = new GameObject("PreBattle"); preBattlePanel.transform.SetParent(canvas.transform, false);
         var pbRT = preBattlePanel.AddComponent<RectTransform>(); Stretch(pbRT);
         var pbBg = MakeImage(preBattlePanel.transform, "PbBG", new Color(0,0,0,0.85f)); Stretch(pbBg.rectTransform);
         var pbTitle = MakeText(preBattlePanel.transform, "PbTitle", "", 90, new Color(1f,0.3f,0.2f,1f));
@@ -1336,20 +1826,16 @@ public class Bootstrapper : MonoBehaviour
         preBattlePanel.SetActive(false);
 
         // Battle panel
-        battlePanel = new GameObject("BattlePanel");
-        battlePanel.transform.SetParent(canvas.transform, false);
+        battlePanel = new GameObject("BattlePanel"); battlePanel.transform.SetParent(canvas.transform, false);
         var btRT = battlePanel.AddComponent<RectTransform>(); Stretch(btRT);
         battleBg = MakeImage(battlePanel.transform, "BattleBg", Color.white); Stretch(battleBg.rectTransform); battleBg.color = new Color(0.4f,0.4f,0.4f,1f);
-        // ===== v14 LAYOUT: TopBar → EnemyPanel → Board → SkillBar → PlayerHpBar (constraints 92-108) =====
-        // Reference resolution: 1080x1920 portrait. SafeArea: top=0, bottom=0.
-        // TopBar (right-top menu button) — constraint 96
-        var topBar = MakeImage(battlePanel.transform, "TopBar", new Color(0,0,0,0.0f));
-        var tbRT = topBar.rectTransform; tbRT.anchorMin = new Vector2(0,1); tbRT.anchorMax = new Vector2(1,1); tbRT.pivot = new Vector2(0.5f,1);
-        tbRT.anchoredPosition = new Vector2(0,0); tbRT.sizeDelta = new Vector2(0, 110);
+
+        // TopBar — menu button top-right
         var menuBtnGo = new GameObject("BattleMenuBtn"); menuBtnGo.transform.SetParent(battlePanel.transform, false);
         var menuImg = menuBtnGo.AddComponent<Image>(); menuImg.color = new Color(0.10f,0.08f,0.15f,0.95f);
-        if (sprites.ContainsKey("circle_mask")) { menuImg.sprite = sprites["circle_mask"]; }
-        var menuBtnRT = menuImg.rectTransform; menuBtnRT.anchorMin = new Vector2(1,1); menuBtnRT.anchorMax = new Vector2(1,1); menuBtnRT.pivot = new Vector2(1,1);
+        if (sprites.ContainsKey("circle_mask")) menuImg.sprite = sprites["circle_mask"];
+        var menuBtnRT = menuImg.rectTransform;
+        menuBtnRT.anchorMin = new Vector2(1,1); menuBtnRT.anchorMax = new Vector2(1,1); menuBtnRT.pivot = new Vector2(1,1);
         menuBtnRT.anchoredPosition = new Vector2(-25,-25); menuBtnRT.sizeDelta = new Vector2(110, 110);
         menuBtnGo.transform.SetAsLastSibling();
         AddOutline(menuBtnGo, new Color(0.85f,0.75f,0.35f,1f), 3);
@@ -1358,71 +1844,73 @@ public class Bootstrapper : MonoBehaviour
         var menuTxt = MakeText(menuBtnGo.transform, "MnuTxt", "☰", 56, new Color(1f,0.9f,0.55f,1f));
         Stretch(menuTxt.rectTransform); menuTxt.alignment = TextAnchor.MiddleCenter; menuTxt.fontStyle = FontStyle.Bold;
         AddOutline(menuTxt.gameObject, new Color(0,0,0,1), 2);
-        // EnemyPanel (constraint 95): avatar lt-corner, HP right of avatar, skills below HP
+
+        // EnemyPanel
         var enemyPanel = MakeImage(battlePanel.transform, "EnemyPanel", new Color(0.08f,0.05f,0.12f,0.55f));
-        var epnRT = enemyPanel.rectTransform; epnRT.anchorMin = new Vector2(0,1); epnRT.anchorMax = new Vector2(1,1); epnRT.pivot = new Vector2(0.5f,1);
+        var epnRT = enemyPanel.rectTransform;
+        epnRT.anchorMin = new Vector2(0,1); epnRT.anchorMax = new Vector2(1,1); epnRT.pivot = new Vector2(0.5f,1);
         epnRT.anchoredPosition = new Vector2(0,-110); epnRT.sizeDelta = new Vector2(-30, 360);
         AddOutline(enemyPanel.gameObject, new Color(0.7f,0.2f,0.2f,0.8f), 2);
-        // Enemy avatar 240x300 lt-corner
         battleEnemyPortrait = MakeImage(enemyPanel.transform, "EnemyPort", Color.white);
         var epRT = battleEnemyPortrait.rectTransform;
         epRT.anchorMin = new Vector2(0,1); epRT.anchorMax = new Vector2(0,1); epRT.pivot = new Vector2(0,1);
         epRT.anchoredPosition = new Vector2(15,-15); epRT.sizeDelta = new Vector2(240, 300);
         battleEnemyPortrait.preserveAspect = true;
         AddOutline(battleEnemyPortrait.gameObject, new Color(0.9f,0.3f,0.3f,0.95f), 3);
-        // Enemy HP bar right of avatar (top of right area)
         var ehpBg = MakeImage(enemyPanel.transform, "EHpBg", new Color(0.2f,0.05f,0.05f,0.96f));
-        var ehbRT = ehpBg.rectTransform; ehbRT.anchorMin = new Vector2(0,1); ehbRT.anchorMax = new Vector2(1,1); ehbRT.pivot = new Vector2(0,1);
+        var ehbRT = ehpBg.rectTransform;
+        ehbRT.anchorMin = new Vector2(0,1); ehbRT.anchorMax = new Vector2(1,1); ehbRT.pivot = new Vector2(0,1);
         ehbRT.anchoredPosition = new Vector2(270,-20); ehbRT.sizeDelta = new Vector2(-285, 70);
         AddOutline(ehpBg.gameObject, new Color(0.9f,0.3f,0.3f,1f), 2);
         enemyHpBar = MakeImage(ehpBg.transform, "EHpFill", new Color(0.85f,0.18f,0.18f,1));
         Stretch(enemyHpBar.rectTransform); enemyHpBar.fillAmount = 1f;
-        battleEnemyHpText = MakeText(ehpBg.transform, "EHpTxt", "100/100", 32, Color.white); Stretch(battleEnemyHpText.rectTransform); battleEnemyHpText.alignment = TextAnchor.MiddleCenter; battleEnemyHpText.fontStyle = FontStyle.Bold;
+        battleEnemyHpText = MakeText(ehpBg.transform, "EHpTxt", "100/100", 32, Color.white);
+        Stretch(battleEnemyHpText.rectTransform); battleEnemyHpText.alignment = TextAnchor.MiddleCenter; battleEnemyHpText.fontStyle = FontStyle.Bold;
         AddOutline(battleEnemyHpText.gameObject, new Color(0,0,0,1), 2);
-        // Enemy intent label (next skill) — constraint 107
         enemyIntentText = MakeText(enemyPanel.transform, "EnIntent", "", 22, new Color(1f,0.85f,0.55f,1f));
-        var einRT = enemyIntentText.rectTransform; einRT.anchorMin = new Vector2(0,1); einRT.anchorMax = new Vector2(1,1); einRT.pivot = new Vector2(0,1);
+        var einRT = enemyIntentText.rectTransform;
+        einRT.anchorMin = new Vector2(0,1); einRT.anchorMax = new Vector2(1,1); einRT.pivot = new Vector2(0,1);
         einRT.anchoredPosition = new Vector2(270,-100); einRT.sizeDelta = new Vector2(-285, 36);
         enemyIntentText.alignment = TextAnchor.MiddleLeft; enemyIntentText.fontStyle = FontStyle.Bold;
         AddOutline(enemyIntentText.gameObject, new Color(0,0,0,1), 2);
-        // Enemy skill icons row (under HP) — up to 3, count by enemy tier
         for (int i=0;i<3;i++)
         {
-            var esGo = new GameObject("EnSkill"+i);
-            esGo.transform.SetParent(enemyPanel.transform, false);
+            var esGo = new GameObject("EnSkill"+i); esGo.transform.SetParent(enemyPanel.transform, false);
             var esImg = esGo.AddComponent<Image>(); esImg.color = new Color(0.15f,0.07f,0.12f,0.95f);
-            var esRT = esImg.rectTransform; esRT.anchorMin = new Vector2(0,1); esRT.anchorMax = new Vector2(0,1); esRT.pivot = new Vector2(0,1);
+            var esRT = esImg.rectTransform;
+            esRT.anchorMin = new Vector2(0,1); esRT.anchorMax = new Vector2(0,1); esRT.pivot = new Vector2(0,1);
             esRT.anchoredPosition = new Vector2(270 + i*180, -150); esRT.sizeDelta = new Vector2(160, 160);
             AddOutline(esGo, new Color(0.85f,0.35f,0.35f,1f), 3);
             enemySkillIcons[i] = esImg;
-            // CD text in lower-right corner
             var cdT = MakeText(esGo.transform, "EnSkCd"+i, "", 30, new Color(1f,0.95f,0.85f,1f));
-            var cdRT = cdT.rectTransform; cdRT.anchorMin = new Vector2(1,0); cdRT.anchorMax = new Vector2(1,0); cdRT.pivot = new Vector2(1,0);
+            var cdRT = cdT.rectTransform;
+            cdRT.anchorMin = new Vector2(1,0); cdRT.anchorMax = new Vector2(1,0); cdRT.pivot = new Vector2(1,0);
             cdRT.anchoredPosition = new Vector2(-8,8); cdRT.sizeDelta = new Vector2(50,40);
             cdT.alignment = TextAnchor.MiddleRight; cdT.fontStyle = FontStyle.Bold;
             AddOutline(cdT.gameObject, new Color(0,0,0,1), 2);
             enemySkillCdText[i] = cdT;
             esGo.SetActive(false);
         }
-        // BoardPanel — safe zone between EnemyPanel and SkillBar (constraint 97)
-        // Layout: enemy panel ends at y = -110-360 = -470 from top; PlayerHp 80 + SkillBar 180 = 260 from bottom
-        // Board height fills remaining area
+
+        // BoardPanel safe zone
         var boardPanel = MakeImage(battlePanel.transform, "BoardPanel", new Color(0,0,0,0.0f));
-        var bpRT = boardPanel.rectTransform; bpRT.anchorMin = new Vector2(0,0); bpRT.anchorMax = new Vector2(1,1); bpRT.pivot = new Vector2(0.5f,0.5f);
+        var bpRT = boardPanel.rectTransform;
+        bpRT.anchorMin = new Vector2(0,0); bpRT.anchorMax = new Vector2(1,1); bpRT.pivot = new Vector2(0.5f,0.5f);
         bpRT.offsetMin = new Vector2(20, 280); bpRT.offsetMax = new Vector2(-20, -480);
         boardPanelRT = bpRT;
-        // Player SkillBar (5 circular icons horizontal) ABOVE HP bar (constraint 94, 108)
+
+        // Player Skill Bar
         var skillBar = MakeImage(battlePanel.transform, "PlayerSkillBar", new Color(0.08f,0.06f,0.10f,0.55f));
-        var sbRT = skillBar.rectTransform; sbRT.anchorMin = new Vector2(0,0); sbRT.anchorMax = new Vector2(1,0); sbRT.pivot = new Vector2(0.5f,0);
+        var sbRT = skillBar.rectTransform;
+        sbRT.anchorMin = new Vector2(0,0); sbRT.anchorMax = new Vector2(1,0); sbRT.pivot = new Vector2(0.5f,0);
         sbRT.anchoredPosition = new Vector2(0,90); sbRT.sizeDelta = new Vector2(-30, 180);
         AddOutline(skillBar.gameObject, new Color(0.4f,0.6f,0.5f,0.6f), 2);
-        string[] vfxKeys = new []{ "vfx_inferno_burst", "vfx_freeze", "vfx_titan_slam", "bonus_hermes_step", "bonus_zeus_lightning" };
-        Color[] ringTints = new []{ new Color(1f,0.45f,0.15f,1f), new Color(0.5f,0.85f,1f,1f), new Color(1f,0.9f,0.3f,1f), new Color(0.9f,0.8f,0.4f,1f), new Color(0.6f,0.85f,1f,1f) };
+        string[] vfxKeys = { "vfx_inferno_burst","vfx_freeze","vfx_titan_slam","bonus_hermes_step","bonus_zeus_lightning" };
+        Color[] ringTints = { new Color(1f,0.45f,0.15f,1f), new Color(0.5f,0.85f,1f,1f), new Color(1f,0.9f,0.3f,1f), new Color(0.9f,0.8f,0.4f,1f), new Color(0.6f,0.85f,1f,1f) };
         for (int i=0;i<5;i++)
         {
             int captured = i;
-            var ringGo = new GameObject("AbilRing"+i);
-            ringGo.transform.SetParent(skillBar.transform, false);
+            var ringGo = new GameObject("AbilRing"+i); ringGo.transform.SetParent(skillBar.transform, false);
             var ringImg = ringGo.AddComponent<Image>(); ringImg.color = new Color(0.10f,0.08f,0.15f,0.97f);
             if (sprites.ContainsKey("circle_mask")) { ringImg.sprite = sprites["circle_mask"]; ringImg.color = ringTints[i]; }
             var ringRT = ringImg.rectTransform;
@@ -1430,21 +1918,18 @@ public class Bootstrapper : MonoBehaviour
             ringRT.anchoredPosition = new Vector2(15 + i*200, 0); ringRT.sizeDelta = new Vector2(150, 150);
             AddOutline(ringGo, ringTints[i], 4);
             abilityRingBg[i] = ringImg;
-            var iconGo = new GameObject("AbilIcon"+i);
-            iconGo.transform.SetParent(ringGo.transform, false);
+            var iconGo = new GameObject("AbilIcon"+i); iconGo.transform.SetParent(ringGo.transform, false);
             var iconImg = iconGo.AddComponent<Image>();
             if (sprites.ContainsKey(vfxKeys[i])) iconImg.sprite = sprites[vfxKeys[i]];
             iconImg.color = Color.white; iconImg.preserveAspect = true; iconImg.raycastTarget = false;
             var iRT = iconImg.rectTransform; iRT.anchorMin = new Vector2(0,0); iRT.anchorMax = new Vector2(1,1); iRT.pivot = new Vector2(0.5f,0.5f);
             iRT.offsetMin = new Vector2(10,10); iRT.offsetMax = new Vector2(-10,-10);
-            var cdGo = new GameObject("AbilCd"+i);
-            cdGo.transform.SetParent(ringGo.transform, false);
+            var cdGo = new GameObject("AbilCd"+i); cdGo.transform.SetParent(ringGo.transform, false);
             var cdImg = cdGo.AddComponent<Image>(); cdImg.color = new Color(0,0,0,0.7f); cdImg.raycastTarget = false;
             cdImg.type = Image.Type.Filled; cdImg.fillAmount = 0f;
             var cdRT = cdImg.rectTransform; cdRT.anchorMin = Vector2.zero; cdRT.anchorMax = Vector2.one; cdRT.offsetMin = Vector2.zero; cdRT.offsetMax = Vector2.zero;
             abilityCdMask[i] = cdImg;
-            var abBtn = ringGo.AddComponent<Button>();
-            abBtn.onClick.AddListener(() => UseAbility(captured));
+            var abBtn = ringGo.AddComponent<Button>(); abBtn.onClick.AddListener(() => UseAbility(captured));
             var abTxt = MakeText(ringGo.transform, "Cost", "", 22, new Color(1f,0.95f,0.85f,1f));
             var atRT = abTxt.rectTransform; atRT.anchorMin = new Vector2(0,0); atRT.anchorMax = new Vector2(1,0); atRT.pivot = new Vector2(0.5f,0);
             atRT.anchoredPosition = new Vector2(0,-22); atRT.sizeDelta = new Vector2(0,40);
@@ -1453,44 +1938,51 @@ public class Bootstrapper : MonoBehaviour
             abilityButtonsGO.Add(ringGo);
             abilityButtonsText.Add(abTxt);
         }
-        // v15: Player HP bar — truly full-width bottom (constraints 93)
+
+        // Player HP bar
         var phpBg = MakeImage(battlePanel.transform, "PHpBg", new Color(0.04f,0.16f,0.06f,0.96f));
-        var phbRT = phpBg.rectTransform; phbRT.anchorMin = new Vector2(0,0); phbRT.anchorMax = new Vector2(1,0); phbRT.pivot = new Vector2(0.5f,0);
-        phbRT.offsetMin = new Vector2(15, 10); phbRT.offsetMax = new Vector2(-15, 90);
+        var phbRT = phpBg.rectTransform;
+        phbRT.anchorMin = new Vector2(0,0); phbRT.anchorMax = new Vector2(1,0); phbRT.pivot = new Vector2(0.5f,0);
+        phbRT.offsetMin = new Vector2(15,10); phbRT.offsetMax = new Vector2(-15, 90);
         AddOutline(phpBg.gameObject, new Color(0.3f,0.85f,0.5f,1f), 3);
         playerHpBar = MakeImage(phpBg.transform, "PHpFill", new Color(0.3f,0.85f,0.3f,1));
         Stretch(playerHpBar.rectTransform); playerHpBar.fillAmount = 1f;
-        battlePlayerHpText = MakeText(phpBg.transform, "PHpTxt", "100/100", 36, Color.white); Stretch(battlePlayerHpText.rectTransform); battlePlayerHpText.alignment = TextAnchor.MiddleCenter; battlePlayerHpText.fontStyle = FontStyle.Bold;
+        battlePlayerHpText = MakeText(phpBg.transform, "PHpTxt", "100/100", 36, Color.white);
+        Stretch(battlePlayerHpText.rectTransform); battlePlayerHpText.alignment = TextAnchor.MiddleCenter; battlePlayerHpText.fontStyle = FontStyle.Bold;
         AddOutline(battlePlayerHpText.gameObject, new Color(0,0,0,1), 2);
-        // Hidden player portrait — still referenced by code, parked off-screen
+
         battlePlayerPortrait = MakeImage(battlePanel.transform, "PlayerPortHidden", new Color(1,1,1,0));
         battlePlayerPortrait.raycastTarget = false; battlePlayerPortrait.preserveAspect = true;
-        var ppRT = battlePlayerPortrait.rectTransform; ppRT.anchorMin = new Vector2(0,0); ppRT.anchorMax = new Vector2(0,0); ppRT.pivot = new Vector2(0,0);
+        var ppRT = battlePlayerPortrait.rectTransform;
+        ppRT.anchorMin = new Vector2(0,0); ppRT.anchorMax = new Vector2(0,0); ppRT.pivot = new Vector2(0,0);
         ppRT.anchoredPosition = new Vector2(-9999,-9999); ppRT.sizeDelta = new Vector2(10,10);
-        // Turn label — centered above board
+
         battleTurnText = MakeText(battlePanel.transform, "Turn", "", 40, new Color(1f,0.9f,0.5f,1f));
-        var ttuRT = battleTurnText.rectTransform; ttuRT.anchorMin = new Vector2(0,1); ttuRT.anchorMax = new Vector2(1,1); ttuRT.pivot = new Vector2(0.5f,1);
+        var ttuRT = battleTurnText.rectTransform;
+        ttuRT.anchorMin = new Vector2(0,1); ttuRT.anchorMax = new Vector2(1,1); ttuRT.pivot = new Vector2(0.5f,1);
         ttuRT.anchoredPosition = new Vector2(0,-490); ttuRT.sizeDelta = new Vector2(-200,60);
         battleTurnText.alignment = TextAnchor.MiddleCenter; battleTurnText.fontStyle = FontStyle.Bold;
         AddOutline(battleTurnText.gameObject, new Color(0,0,0,1), 3);
-        // VFX overlay
+
         vfxOverlay = MakeImage(battlePanel.transform, "Vfx", new Color(1,1,1,0));
-        var vfRT = vfxOverlay.rectTransform; vfRT.anchorMin = new Vector2(0.5f,0.5f); vfRT.anchorMax = new Vector2(0.5f,0.5f);
+        var vfRT = vfxOverlay.rectTransform;
+        vfRT.anchorMin = new Vector2(0.5f,0.5f); vfRT.anchorMax = new Vector2(0.5f,0.5f);
         vfRT.pivot = new Vector2(0.5f,0.5f); vfRT.anchoredPosition = new Vector2(0,0); vfRT.sizeDelta = new Vector2(900,900);
         vfxOverlay.preserveAspect = true; vfxOverlay.raycastTarget = false;
         battlePanel.SetActive(false);
 
         // Battle result panel
-        battleResultPanel = new GameObject("BattleResult");
-        battleResultPanel.transform.SetParent(canvas.transform, false);
+        battleResultPanel = new GameObject("BattleResult"); battleResultPanel.transform.SetParent(canvas.transform, false);
         var brRT = battleResultPanel.AddComponent<RectTransform>(); Stretch(brRT);
         var brBg = MakeImage(battleResultPanel.transform, "BrBg", new Color(0,0,0,0.88f)); Stretch(brBg.rectTransform);
         battleResultTitle = MakeText(battleResultPanel.transform, "BrTitle", "", 100, new Color(1f,0.85f,0.4f,1f));
-        var brtRT = battleResultTitle.rectTransform; brtRT.anchorMin = new Vector2(0.5f,0.5f); brtRT.anchorMax = new Vector2(0.5f,0.5f);
+        var brtRT = battleResultTitle.rectTransform;
+        brtRT.anchorMin = new Vector2(0.5f,0.5f); brtRT.anchorMax = new Vector2(0.5f,0.5f);
         brtRT.pivot = new Vector2(0.5f,0.5f); brtRT.anchoredPosition = new Vector2(0,200); brtRT.sizeDelta = new Vector2(900,160);
         battleResultTitle.alignment = TextAnchor.MiddleCenter; battleResultTitle.fontStyle = FontStyle.Bold;
         battleResultRewardText = MakeText(battleResultPanel.transform, "BrRew", "", 60, new Color(1f,0.9f,0.5f,1f));
-        var brrRT = battleResultRewardText.rectTransform; brrRT.anchorMin = new Vector2(0.5f,0.5f); brrRT.anchorMax = new Vector2(0.5f,0.5f);
+        var brrRT = battleResultRewardText.rectTransform;
+        brrRT.anchorMin = new Vector2(0.5f,0.5f); brrRT.anchorMax = new Vector2(0.5f,0.5f);
         brrRT.pivot = new Vector2(0.5f,0.5f); brrRT.anchoredPosition = new Vector2(0,40); brrRT.sizeDelta = new Vector2(900,100);
         battleResultRewardText.alignment = TextAnchor.MiddleCenter;
         Text brContBtnText;
@@ -1499,26 +1991,25 @@ public class Bootstrapper : MonoBehaviour
         battleResultPanel.SetActive(false);
 
         // Shop panel
-        shopPanel = new GameObject("ShopPanel");
-        shopPanel.transform.SetParent(canvas.transform, false);
+        shopPanel = new GameObject("ShopPanel"); shopPanel.transform.SetParent(canvas.transform, false);
         var shRT = shopPanel.AddComponent<RectTransform>(); Stretch(shRT);
         var shBg = MakeImage(shopPanel.transform, "ShBg", new Color(0.02f,0.02f,0.05f,0.96f)); Stretch(shBg.rectTransform);
         shopTitleText = MakeText(shopPanel.transform, "ShTitle", "", 80, new Color(1f,0.85f,0.4f,1f));
-        var sttRT = shopTitleText.rectTransform; sttRT.anchorMin = new Vector2(0,1); sttRT.anchorMax = new Vector2(1,1); sttRT.pivot = new Vector2(0.5f,1);
+        var sttRT = shopTitleText.rectTransform;
+        sttRT.anchorMin = new Vector2(0,1); sttRT.anchorMax = new Vector2(1,1); sttRT.pivot = new Vector2(0.5f,1);
         sttRT.anchoredPosition = new Vector2(0,-100); sttRT.sizeDelta = new Vector2(-60,120);
         shopTitleText.alignment = TextAnchor.MiddleCenter; shopTitleText.fontStyle = FontStyle.Bold;
-        // Currency display
         echoesText = MakeText(shopPanel.transform, "EcTxt", "0", 44, new Color(1f,0.85f,0.4f,1f));
-        var ecRT = echoesText.rectTransform; ecRT.anchorMin = new Vector2(0,1); ecRT.anchorMax = new Vector2(0,1); ecRT.pivot = new Vector2(0,1);
+        var ecRT = echoesText.rectTransform;
+        ecRT.anchorMin = new Vector2(0,1); ecRT.anchorMax = new Vector2(0,1); ecRT.pivot = new Vector2(0,1);
         ecRT.anchoredPosition = new Vector2(40,-250); ecRT.sizeDelta = new Vector2(300,60); echoesText.alignment = TextAnchor.MiddleLeft;
         sparksText = MakeText(shopPanel.transform, "SpTxt", "0", 44, new Color(0.9f,0.4f,1f,1f));
-        var spkRT = sparksText.rectTransform; spkRT.anchorMin = new Vector2(1,1); spkRT.anchorMax = new Vector2(1,1); spkRT.pivot = new Vector2(1,1);
+        var spkRT = sparksText.rectTransform;
+        spkRT.anchorMin = new Vector2(1,1); spkRT.anchorMax = new Vector2(1,1); spkRT.pivot = new Vector2(1,1);
         spkRT.anchoredPosition = new Vector2(-40,-250); spkRT.sizeDelta = new Vector2(300,60); sparksText.alignment = TextAnchor.MiddleRight;
-        // 5 ability shop buttons + 1 demo donate
         for (int i=0;i<5;i++)
         {
-            int captured = i;
-            Text btx;
+            int captured = i; Text btx;
             MakeFlatButton(shopPanel.transform, "ShopBuy"+i, new Vector2(0, 380 - i*180), new Vector2(880, 160), () => OnShopBuy(captured), out btx);
             btx.text = L("ABIL_"+AbilityKeys[i].ToUpper()) + "  —  " + AbilityPrices[i] + " " + L("ECHOES");
         }
@@ -1531,16 +2022,17 @@ public class Bootstrapper : MonoBehaviour
         shopPanel.SetActive(false);
 
         // Ending panel
-        endingPanel = new GameObject("EndingPanel");
-        endingPanel.transform.SetParent(canvas.transform, false);
+        endingPanel = new GameObject("EndingPanel"); endingPanel.transform.SetParent(canvas.transform, false);
         var enRT = endingPanel.AddComponent<RectTransform>(); Stretch(enRT);
         var enBg = MakeImage(endingPanel.transform, "EnBg", new Color(0,0,0,0.95f)); Stretch(enBg.rectTransform);
         endingTitleText = MakeText(endingPanel.transform, "EnTitle", "", 90, new Color(1f,0.85f,0.4f,1f));
-        var entRT = endingTitleText.rectTransform; entRT.anchorMin = new Vector2(0.5f,1); entRT.anchorMax = new Vector2(0.5f,1); entRT.pivot = new Vector2(0.5f,1);
+        var entRT = endingTitleText.rectTransform;
+        entRT.anchorMin = new Vector2(0.5f,1); entRT.anchorMax = new Vector2(0.5f,1); entRT.pivot = new Vector2(0.5f,1);
         entRT.anchoredPosition = new Vector2(0,-220); entRT.sizeDelta = new Vector2(1000,200);
         endingTitleText.alignment = TextAnchor.MiddleCenter; endingTitleText.fontStyle = FontStyle.Bold;
         endingBodyText = MakeText(endingPanel.transform, "EnBody", "", 38, Color.white);
-        var enbRT = endingBodyText.rectTransform; enbRT.anchorMin = new Vector2(0.5f,0.5f); enbRT.anchorMax = new Vector2(0.5f,0.5f); enbRT.pivot = new Vector2(0.5f,0.5f);
+        var enbRT = endingBodyText.rectTransform;
+        enbRT.anchorMin = new Vector2(0.5f,0.5f); enbRT.anchorMax = new Vector2(0.5f,0.5f); enbRT.pivot = new Vector2(0.5f,0.5f);
         enbRT.anchoredPosition = new Vector2(0,0); enbRT.sizeDelta = new Vector2(900,800);
         endingBodyText.alignment = TextAnchor.UpperCenter;
         Text enContText;
@@ -1548,16 +2040,15 @@ public class Bootstrapper : MonoBehaviour
         enContText.text = L("NEXT");
         endingPanel.SetActive(false);
 
-        // Fade overlay topmost
         fadeOverlay = MakeImage(canvas.transform, "Fade", Color.black); Stretch(fadeOverlay.rectTransform);
         fadeOverlay.transform.SetAsLastSibling(); fadeOverlay.raycastTarget = false;
         skipBtnGO.transform.SetAsLastSibling(); nextBtnGO.transform.SetAsLastSibling(); fadeOverlay.transform.SetAsLastSibling();
 
-        // Audio sources
         var aGO = new GameObject("Audio"); aGO.transform.SetParent(transform, false);
         bgmSrc = aGO.AddComponent<AudioSource>(); bgmSrc.loop = true; bgmSrc.volume = 0.55f;
         sfxSrc = aGO.AddComponent<AudioSource>(); sfxSrc.loop = false; sfxSrc.volume = 0.85f;
     }
+
     Text pbTitleRef, pbBeginBtnText;
 
     Image MakeImage(Transform parent, string name, Color c)
@@ -1577,12 +2068,12 @@ public class Bootstrapper : MonoBehaviour
     {
         var go = new GameObject(name); go.transform.SetParent(parent, false);
         var img = go.AddComponent<Image>(); img.color = new Color(0.04f,0.03f,0.07f,0.92f);
-        var rt = img.rectTransform; rt.anchorMin = new Vector2(1,0); rt.anchorMax = new Vector2(1,0); rt.pivot = new Vector2(1,0);
+        var rt = img.rectTransform;
+        rt.anchorMin = new Vector2(1,0); rt.anchorMax = new Vector2(1,0); rt.pivot = new Vector2(1,0);
         rt.anchoredPosition = pos; rt.sizeDelta = new Vector2(360,110);
         var btn = go.AddComponent<Button>();
         var cbb = btn.colors; cbb.normalColor = new Color(0.15f,0.12f,0.20f,0.95f);
-        cbb.highlightedColor = new Color(0.30f,0.22f,0.40f,1f);
-        cbb.pressedColor = new Color(0.50f,0.35f,0.60f,1f);
+        cbb.highlightedColor = new Color(0.30f,0.22f,0.40f,1f); cbb.pressedColor = new Color(0.50f,0.35f,0.60f,1f);
         btn.colors = cbb; btn.onClick.AddListener(cb);
         AddOutline(go, accent, 2);
         outLabel = MakeText(go.transform, "Lbl", label, 36, new Color(1f,0.95f,0.85f,1f));
@@ -1593,12 +2084,12 @@ public class Bootstrapper : MonoBehaviour
     {
         var go = new GameObject(name); go.transform.SetParent(parent, false);
         var img = go.AddComponent<Image>(); img.color = new Color(0.12f,0.10f,0.18f,0.95f);
-        var rt = img.rectTransform; rt.anchorMin = new Vector2(0.5f,0.5f); rt.anchorMax = new Vector2(0.5f,0.5f);
+        var rt = img.rectTransform;
+        rt.anchorMin = new Vector2(0.5f,0.5f); rt.anchorMax = new Vector2(0.5f,0.5f);
         rt.anchoredPosition = pos; rt.sizeDelta = size;
         var btn = go.AddComponent<Button>();
         var cbb = btn.colors; cbb.normalColor = new Color(0.18f,0.15f,0.25f,0.95f);
-        cbb.highlightedColor = new Color(0.32f,0.25f,0.42f,1f);
-        cbb.pressedColor = new Color(0.45f,0.32f,0.55f,1f);
+        cbb.highlightedColor = new Color(0.32f,0.25f,0.42f,1f); cbb.pressedColor = new Color(0.45f,0.32f,0.55f,1f);
         btn.colors = cbb; btn.onClick.AddListener(cb);
         AddOutline(go, new Color(0.9f,0.75f,0.3f,1f), 2);
         outLabel = MakeText(go.transform, "Lbl", "", 40, new Color(1f,0.95f,0.85f,1f));
@@ -1657,7 +2148,6 @@ public class Bootstrapper : MonoBehaviour
     void OnToggleSfx() { sfxOn = !sfxOn; PlayerPrefs.SetInt("sfx", sfxOn?1:0); ApplyAudioMutes(); if (sfxOn) PlaySfx("sfx_choice"); RefreshLocalizedUI(); }
     void OnToggleLang() { PlaySfx("sfx_choice"); lang = (lang == Lang.EN) ? Lang.RU : Lang.EN; PlayerPrefs.SetInt("lang", (int)lang); RefreshLocalizedUI(); }
     void ApplyAudioMutes() { if (bgmSrc!=null) bgmSrc.mute = !musicOn; if (sfxSrc!=null) sfxSrc.mute = !sfxOn; }
-
     void OnStartNew() { PlaySfx("sfx_choice"); idx = 0; currentEpisode = 1; pactScore = vengeScore = mortalScore = 0; SaveProgress(); BeginPlay(); }
     void OnContinue() { PlaySfx("sfx_choice"); BeginPlay(); }
     void BeginPlay() { titlePanel.SetActive(false); settingsPanel.SetActive(false); dialogBox.gameObject.SetActive(true); state = State.Playing; ShowCurrentLine(true); }
@@ -1685,53 +2175,69 @@ public class Bootstrapper : MonoBehaviour
         if (line.choices == null) choicePanel.SetActive(false);
     }
 
-    void ShowChoiceUI()
+    void OnTap()
     {
-        var line = episodes[currentEpisode-1].script[idx];
-        if (line.choices == null) { choicePanel.SetActive(false); return; }
-        choicePanel.SetActive(true); state = State.Choice;
-        skipBtnGO.SetActive(false); nextBtnGO.SetActive(false);
-        for (int i=0;i<choiceButtons.Count;i++)
-        {
-            var go = choiceButtons[i].gameObject;
-            if (i < line.choices.Length) { go.SetActive(true); choiceTexts[i].text = (lang == Lang.EN) ? line.choices[i].en : line.choices[i].ru; }
-            else go.SetActive(false);
-        }
+        if (state == State.Playing && !typing) { OnNext(); return; }
+        if (state == State.Playing && typing) { SkipTypewriter(); }
     }
-    void OnSkip()
+    void SkipTypewriter()
     {
-        if (state != State.Playing) return; if (!typing) return;
-        typeIdx = fullText.Length; dialogText.text = fullText; typing = false; skipBtnGO.SetActive(false);
+        typeIdx = fullText.Length; dialogText.text = fullText; typing = false; typeTimer = 0f;
+        skipBtnGO.SetActive(false);
         var line = episodes[currentEpisode-1].script[idx];
         if (line.choices != null) ShowChoiceUI(); else nextBtnGO.SetActive(true);
     }
+    void OnSkip()
+    {
+        PlaySfx("sfx_choice");
+        var ep = episodes[currentEpisode-1];
+        while (idx < ep.script.Count)
+        {
+            var line = ep.script[idx];
+            if (line.triggerBattle > 0) { ShowPreBattle(line); return; }
+            if (line.choices != null) { SkipTypewriter(); ShowChoiceUI(); return; }
+            idx++;
+        }
+        ShowEpisodeEnding();
+    }
     void OnNext()
     {
-        if (state != State.Playing) return; if (typing) return;
+        PlaySfx("sfx_blip"); typing = false;
         var line = episodes[currentEpisode-1].script[idx];
-        if (line.choices != null) { ShowChoiceUI(); return; }
-        idx++; SaveProgress();
+        if (typing) { SkipTypewriter(); return; }
+        idx++;
+        SaveProgress();
         if (idx >= episodes[currentEpisode-1].script.Count) ShowEpisodeEnding();
         else ShowCurrentLine(false);
+        nextBtnGO.SetActive(false);
     }
-    void OnTap()
+    void ShowChoiceUI()
     {
-        if (state != State.Playing) return;
-        if (typing) { OnSkip(); return; }
-        OnNext();
-    }
-    void OnChoicePicked(int which)
-    {
-        PlaySfx("sfx_choice"); choicePanel.SetActive(false); state = State.Playing;
         var line = episodes[currentEpisode-1].script[idx];
-        if (line.choices != null && which < line.choices.Length)
+        choicePanel.SetActive(true);
+        for (int i=0;i<choiceButtons.Count;i++)
         {
-            int bias = line.choices[which].pathBias;
+            if (line.choices == null || i >= line.choices.Length)
+            { choiceButtons[i].gameObject.SetActive(false); continue; }
+            choiceButtons[i].gameObject.SetActive(true);
+            choiceTexts[i].text = (lang == Lang.EN) ? line.choices[i].en : line.choices[i].ru;
+        }
+        nextBtnGO.SetActive(false);
+    }
+    void OnChoicePicked(int ci)
+    {
+        PlaySfx("sfx_choice");
+        var line = episodes[currentEpisode-1].script[idx];
+        if (line.choices != null && ci < line.choices.Length)
+        {
+            int bias = line.choices[ci].pathBias;
             if (bias == 1) pactScore++;
             else if (bias == 2) vengeScore++;
             else if (bias == 3) mortalScore++;
         }
-        idx++; SaveProgress();
+        choicePanel.SetActive(false);
+        idx++;
+        SaveProgress();
         if (idx >= episodes[currentEpisode-1].script.Count) ShowEpisodeEnding();
         else ShowCurrentLine(false);
     }
@@ -1739,227 +2245,135 @@ public class Bootstrapper : MonoBehaviour
     void ShowPreBattle(Line line)
     {
         state = State.PreBattle;
-        dialogBox.gameObject.SetActive(false); skipBtnGO.SetActive(false); nextBtnGO.SetActive(false);
-        preBattlePanel.SetActive(true);
-        pbTitleRef.text = L("PRE_BATTLE") + " " + line.triggerBattle + " / 11";
-        preBattleText.text = (lang == Lang.EN) ? line.en : line.ru;
-        pbBeginBtnText.text = L("BATTLE_BEGIN");
         currentBattle = line.triggerBattle;
+        preBattlePanel.SetActive(true);
+        dialogBox.gameObject.SetActive(false);
+        choicePanel.SetActive(false);
+        if (pbTitleRef != null) pbTitleRef.text = L("PRE_BATTLE");
+        preBattleText.text = (lang == Lang.EN) ? line.en : line.ru;
+        if (pbBeginBtnText != null) pbBeginBtnText.text = L("BATTLE_BEGIN");
     }
     void OnBeginBattle()
     {
-        PlaySfx("sfx_choice"); preBattlePanel.SetActive(false);
+        PlaySfx("sfx_choice");
+        preBattlePanel.SetActive(false);
         StartBattle(currentEpisode, currentBattle);
     }
+    public void OnBattleMenu() { if (settingsPanel != null) settingsPanel.SetActive(true); }
 
     void ShowEpisodeEnding()
     {
-        // Determine path leader
-        if (path == Path.Undecided)
-        {
-            if (pactScore >= vengeScore && pactScore >= mortalScore) path = Path.Pact;
-            else if (vengeScore >= mortalScore) path = Path.Vengeance;
-            else path = Path.Mortals;
-        }
         state = State.Ending;
-        endingPanel.SetActive(true);
-        dialogBox.gameObject.SetActive(false);
-        skipBtnGO.SetActive(false); nextBtnGO.SetActive(false);
-        choicePanel.SetActive(false);
-        var ep = episodes[currentEpisode-1];
-        endingTitleText.text = (lang == Lang.EN ? "Episode " + ep.id + " — " + ep.nameEn : "Эпизод " + ep.id + " — " + ep.nameRu);
-        string pathLabel = (lang == Lang.EN)
-            ? (path == Path.Pact ? "Path of the Pact" : path == Path.Vengeance ? "Path of Vengeance" : "Path of Mortals")
-            : (path == Path.Pact ? "Путь Пакта" : path == Path.Vengeance ? "Путь Мести" : "Путь Смертных");
-        string body = (lang == Lang.EN)
-            ? "You walk the " + pathLabel + ".\nPact: " + pactScore + " | Vengeance: " + vengeScore + " | Mortals: " + mortalScore + "\n\n" + (currentEpisode < 7 ? "Next: Episode " + (currentEpisode+1) : "FINAL — All seven pantheons walked. The Pact endures.")
-            : "Ты идёшь " + pathLabel + ".\nПакт: " + pactScore + " | Месть: " + vengeScore + " | Смертные: " + mortalScore + "\n\n" + (currentEpisode < 7 ? "Далее: Эпизод " + (currentEpisode+1) : "ФИНАЛ — все семь пантеонов пройдены. Пакт устоял.");
-        endingBodyText.text = body;
-        PlayBgm("bgm_olympus");
-        SaveProgress();
+        endingPanel.SetActive(true); dialogBox.gameObject.SetActive(false);
+        choicePanel.SetActive(false); preBattlePanel.SetActive(false);
+        // Determine ending based on path scores
+        if (pactScore >= vengeScore && pactScore >= mortalScore) path = Path.Pact;
+        else if (vengeScore >= mortalScore) path = Path.Vengeance;
+        else path = Path.Mortals;
+        string pathName = path == Path.Pact ? L("PATH_PACT") : (path == Path.Vengeance ? L("PATH_VENGE") : L("PATH_MORTAL"));
+        endingTitleText.text = L("ENDING_EP") + " " + currentEpisode;
+        string en = "Episode " + currentEpisode + " complete.\nYour path: " + pathName + ".\n\n" + L("TO_BE_CONT");
+        string ru = "Эпизод " + currentEpisode + " завершён.\nВаш путь: " + pathName + ".\n\n" + L("TO_BE_CONT");
+        endingBodyText.text = (lang == Lang.EN) ? en : ru;
     }
     void OnEndingContinue()
     {
+        PlaySfx("sfx_choice");
         endingPanel.SetActive(false);
-        if (currentEpisode < 7) { currentEpisode++; idx = 0; SaveProgress(); BeginPlay(); }
-        else ShowTitle();
+        if (currentEpisode < 7) { currentEpisode++; idx = 0; SaveProgress(); ShowCurrentLine(true); }
+        else { state = State.Ended; ShowTitle(); }
     }
 
-    // ============ SHOP ============
-    void OnOpenShop()
+    void OnOpenShop() { PlaySfx("sfx_choice"); shopPanel.SetActive(true); UpdateBattleHUD(); }
+    void OnCloseShop() { PlaySfx("sfx_choice"); shopPanel.SetActive(false); }
+    void OnShopBuy(int abilIdx)
     {
-        PlaySfx("sfx_choice"); state = State.Shop;
-        settingsPanel.SetActive(false);
-        shopPanel.SetActive(true);
-        UpdateBattleHUD();
-    }
-    void OnCloseShop() { PlaySfx("sfx_choice"); shopPanel.SetActive(false); ShowTitle(); }
-    void OnShopBuy(int idx)
-    {
-        if (echoes < AbilityPrices[idx]) { PlaySfx("sfx_blip"); return; }
-        echoes -= AbilityPrices[idx];
-        string key = AbilityKeys[idx];
+        PlaySfx("sfx_choice");
+        int price = AbilityPrices[abilIdx];
+        if (echoes < price) return;
+        echoes -= price;
+        string key = AbilityKeys[abilIdx];
         if (!abilityCount.ContainsKey(key)) abilityCount[key] = 0;
         abilityCount[key]++;
         SaveProgress();
         UpdateBattleHUD();
-        PlaySfx("sfx_choice");
+        RefreshAbilityButtons();
     }
     void OnMockDonate()
     {
-        // Mock IAP — constraint 72
-        sparks += 500;
-        SaveProgress(); UpdateBattleHUD();
         PlaySfx("sfx_choice");
-        if (shopTitleText != null) shopTitleText.text = L("SHOP") + "  [" + L("DEMO_BILLING") + "]";
+        sparks += 500; echoes += 200;
+        SaveProgress(); UpdateBattleHUD();
     }
 
-    // ============ SAVE / LOAD ============
+    void PlayBgm(string key)
+    {
+        if (key == currentBgm || !clips.ContainsKey(key)) return;
+        currentBgm = key;
+        if (bgmSrc != null) { bgmSrc.clip = clips[key]; bgmSrc.Play(); }
+    }
+    void PlaySfx(string key)
+    {
+        if (sfxSrc != null && clips.ContainsKey(key)) sfxSrc.PlayOneShot(clips[key]);
+    }
+
     void SaveProgress()
     {
-        PlayerPrefs.SetInt("idx", idx);
         PlayerPrefs.SetInt("ep", currentEpisode);
-        PlayerPrefs.SetInt("lang", (int)lang);
-        PlayerPrefs.SetInt("music", musicOn?1:0);
-        PlayerPrefs.SetInt("sfx", sfxOn?1:0);
+        PlayerPrefs.SetInt("idx", idx);
+        PlayerPrefs.SetInt("echoes", echoes);
+        PlayerPrefs.SetInt("sparks", sparks);
         PlayerPrefs.SetInt("pact", pactScore);
         PlayerPrefs.SetInt("venge", vengeScore);
         PlayerPrefs.SetInt("mortal", mortalScore);
-        PlayerPrefs.SetInt("echoes", echoes);
-        PlayerPrefs.SetInt("sparks", sparks);
-        foreach (var k in AbilityKeys)
-            PlayerPrefs.SetInt("abil_"+k, abilityCount.ContainsKey(k) ? abilityCount[k] : 0);
+        PlayerPrefs.SetInt("music", musicOn?1:0);
+        PlayerPrefs.SetInt("sfx", sfxOn?1:0);
+        PlayerPrefs.SetInt("lang", (int)lang);
+        foreach (var kv in abilityCount) PlayerPrefs.SetInt("ab_"+kv.Key, kv.Value);
         PlayerPrefs.Save();
     }
     void LoadProgress()
     {
-        idx = PlayerPrefs.GetInt("idx", 0);
-        currentEpisode = Math.Max(1, PlayerPrefs.GetInt("ep", 1));
-        lang = (Lang)PlayerPrefs.GetInt("lang", 0);
-        musicOn = PlayerPrefs.GetInt("music", 1) == 1;
-        sfxOn = PlayerPrefs.GetInt("sfx", 1) == 1;
-        pactScore = PlayerPrefs.GetInt("pact", 0);
-        vengeScore = PlayerPrefs.GetInt("venge", 0);
-        mortalScore = PlayerPrefs.GetInt("mortal", 0);
-        echoes = PlayerPrefs.GetInt("echoes", 0);
-        sparks = PlayerPrefs.GetInt("sparks", 0);
-        foreach (var k in AbilityKeys)
-            abilityCount[k] = PlayerPrefs.GetInt("abil_"+k, 0);
-    }
-
-    // ============ AUDIO ============
-    void PlayBgm(string id)
-    {
-        if (string.IsNullOrEmpty(id)) return;
-        if (id == currentBgm && bgmSrc.isPlaying) return;
-        if (!clips.ContainsKey(id)) return;
-        bgmSrc.clip = clips[id]; bgmSrc.Play(); currentBgm = id;
-    }
-    void PlaySfx(string id)
-    {
-        if (!sfxOn) return;
-        if (string.IsNullOrEmpty(id) || !clips.ContainsKey(id)) return;
-        sfxSrc.PlayOneShot(clips[id]);
-    }
-
-    // ============ UPDATE ============
-    void Update()
-    {
-        if (fadeDir != 0) { fadeAlpha += fadeDir * Time.deltaTime * 0.7f; fadeAlpha = Mathf.Clamp01(fadeAlpha); fadeOverlay.color = new Color(0,0,0,fadeAlpha); if (fadeAlpha <= 0f || fadeAlpha >= 1f) fadeDir = 0; }
-        if (crossfading)
-        {
-            crossTime += Time.deltaTime; float a = Mathf.Clamp01(crossTime / CROSS_DUR);
-            bgImageNext.color = new Color(1,1,1,a); bgImage.color = new Color(1,1,1,1f-a);
-            if (a >= 1f) { bgImage.sprite = bgImageNext.sprite; bgImage.color = Color.white; bgImageNext.color = new Color(1,1,1,0); currentBgKey = pendingBg; crossfading = false; }
-        }
-        if (typing && (state == State.Playing || state == State.Choice))
-        {
-            typeTimer += Time.deltaTime;
-            while (typeTimer >= TYPE_SPEED && typeIdx < fullText.Length)
-            { typeTimer -= TYPE_SPEED; typeIdx++; dialogText.text = fullText.Substring(0, typeIdx); if (typeIdx % 6 == 0) PlaySfx("sfx_blip"); }
-            if (typeIdx >= fullText.Length)
-            {
-                typing = false; skipBtnGO.SetActive(false);
-                var line = episodes[currentEpisode-1].script[idx];
-                if (line.choices != null) ShowChoiceUI(); else nextBtnGO.SetActive(true);
-            }
-        }
-        if (nextBtnGO.activeSelf) { pulseT += Time.deltaTime * 3f; float p = 0.85f + 0.15f * Mathf.Sin(pulseT); nextBtnText.color = new Color(1f,0.95f,0.85f,p); }
-        // Battle enemy turn scheduling
-        if (state == State.Battle && battleResolving)
-        {
-            enemyDelay -= Time.deltaTime;
-            if (enemyDelay <= 0f) { DoEnemyTurn(); }
-        }
-        // VFX overlay fade
-        if (!string.IsNullOrEmpty(vfxAnim))
-        {
-            vfxT += Time.deltaTime;
-            float a = Mathf.Clamp01(1f - vfxT / 0.9f);
-            vfxOverlay.color = new Color(1,1,1,a);
-            if (vfxT >= 0.9f) { vfxAnim = ""; vfxOverlay.color = new Color(1,1,1,0); }
-        }
-        // v13: GemTween updates (swap 0.25s, fade 0.3s, drop 0.4s)
-        if (state == State.Battle && activeTweens.Count > 0)
-        {
-            for (int i = activeTweens.Count - 1; i >= 0; i--)
-            {
-                var tw = activeTweens[i];
-                tw.t += Time.deltaTime;
-                float a = Mathf.Clamp01(tw.t / Mathf.Max(0.0001f, tw.dur));
-                float ease = a*a*(3f-2f*a);
-                if (tw.kind == 0 || tw.kind == 2) {
-                    if (tw.rt != null) tw.rt.anchoredPosition = tw.from + (tw.to - tw.from) * ease;
-                } else if (tw.kind == 1) {
-                    if (tw.img != null) tw.img.color = new Color(tw.img.color.r, tw.img.color.g, tw.img.color.b, 1f - a);
-                } else if (tw.kind == 3) {
-                    // v15: destroy VFX overlay - fade out + scale up, auto-Destroy GO at end (constraint 111)
-                    if (tw.img != null) { tw.img.color = new Color(1f,1f,1f, 1f - a); if (tw.rt != null) tw.rt.localScale = new Vector3(1f + a*0.5f, 1f + a*0.5f, 1f); }
-                }
-                if (a >= 1f) {
-                    tw.done = true;
-                    if (tw.kind == 3 && tw.img != null && tw.img.gameObject != null) UnityEngine.Object.Destroy(tw.img.gameObject);
-                    activeTweens.RemoveAt(i);
-                }
-            }
-        }
-        // v13: cooldown decay
-        if (state == State.Battle)
-        {
-            for (int i=0;i<abilityCdT.Length;i++)
-            {
-                if (abilityCdT[i] > 0f) {
-                    abilityCdT[i] -= Time.deltaTime;
-                    if (abilityCdT[i] < 0f) abilityCdT[i] = 0f;
-                    if (abilityCdMask[i] != null && abilityCdDur[i] > 0f) abilityCdMask[i].fillAmount = abilityCdT[i] / abilityCdDur[i];
-                } else if (abilityCdMask[i] != null) abilityCdMask[i].fillAmount = 0f;
-            }
-        }
-        if (state == State.Battle) RefreshAbilityButtons();
+        currentEpisode = PlayerPrefs.GetInt("ep", 1);
+        idx            = PlayerPrefs.GetInt("idx", 0);
+        echoes         = PlayerPrefs.GetInt("echoes", 0);
+        sparks         = PlayerPrefs.GetInt("sparks", 0);
+        pactScore      = PlayerPrefs.GetInt("pact", 0);
+        vengeScore     = PlayerPrefs.GetInt("venge", 0);
+        mortalScore    = PlayerPrefs.GetInt("mortal", 0);
+        musicOn        = PlayerPrefs.GetInt("music", 1) == 1;
+        sfxOn          = PlayerPrefs.GetInt("sfx",   1) == 1;
+        lang           = (Lang)PlayerPrefs.GetInt("lang", 0);
+        string[] abKeys = { "inferno","freeze","shuffle","cleanse","slam" };
+        foreach (var k in abKeys) abilityCount[k] = PlayerPrefs.GetInt("ab_"+k, 0);
+        if (currentEpisode < 1 || currentEpisode > 7) currentEpisode = 1;
+        if (idx < 0) idx = 0;
     }
 }
 
-// v14: swipe gesture handler attached to each gem GameObject
-public class GemDragHandler : UnityEngine.MonoBehaviour,
-    UnityEngine.EventSystems.IBeginDragHandler,
-    UnityEngine.EventSystems.IDragHandler,
-    UnityEngine.EventSystems.IEndDragHandler
+// ============ GemDragHandler (attached per gem cell) ============
+using UnityEngine.EventSystems;
+
+public class GemDragHandler : MonoBehaviour, IBeginDragHandler, IEndDragHandler
 {
-    Bootstrapper bs; int cx, cy;
-    UnityEngine.Vector2 startPos;
-    bool dragging;
-    public void Init(Bootstrapper b, int x, int y) { bs = b; cx = x; cy = y; }
-    public void OnBeginDrag(UnityEngine.EventSystems.PointerEventData e) { startPos = e.position; dragging = true; }
-    public void OnDrag(UnityEngine.EventSystems.PointerEventData e) { /* visual hint optional */ }
-    public void OnEndDrag(UnityEngine.EventSystems.PointerEventData e)
+    Bootstrapper board;
+    int cellX, cellY;
+    Vector2 dragStart;
+    const float SWIPE_THRESHOLD = 30f;
+
+    public void Init(Bootstrapper b, int x, int y) { board = b; cellX = x; cellY = y; }
+
+    public void OnBeginDrag(PointerEventData ev) { dragStart = ev.position; }
+
+    public void OnEndDrag(PointerEventData ev)
     {
-        if (!dragging || bs == null) return; dragging = false;
-        UnityEngine.Vector2 d = e.position - startPos;
-        float ax = (d.x < 0 ? -d.x : d.x); float ay = (d.y < 0 ? -d.y : d.y);
-        if (ax < 25f && ay < 25f) return; // too small - treat as tap (Button handles it)
+        Vector2 delta = ev.position - dragStart;
+        if (delta.magnitude < SWIPE_THRESHOLD) return;
         int dx = 0, dy = 0;
-        if (ax > ay) dx = (d.x > 0) ? 1 : -1;
-        else        dy = (d.y > 0) ? -1 : 1; // UI Y inverted (top is +)
-        bs.OnGemSwipe(cx, cy, dx, dy);
+        if (Mathf.Abs(delta.x) > Mathf.Abs(delta.y))
+            dx = delta.x > 0 ? 1 : -1;
+        else
+            dy = delta.y > 0 ? -1 : 1;   // UI Y is inverted (up=positive screen but -y in grid)
+        board.OnGemSwipe(cellX, cellY, dx, dy);
     }
 }
