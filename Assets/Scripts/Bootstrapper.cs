@@ -622,10 +622,28 @@ public class Bootstrapper : MonoBehaviour
         public Image img;
         public Vector2 from, to;
         public float t, dur;
-        public int kind;  // 0=move, 1=fadeOut, 2=drop, 3=destroyVfx
+        // kind: 0=move/swap, 1=fadeOut, 2=drop, 3=destroyVfx, 4=selectionPulse
+        public int kind;
     }
     List<GemTween> activeTweens = new List<GemTween>();
     bool TweensActive => activeTweens.Count > 0;
+
+    // Safely clear tweens — destroys VFX GameObjects before clearing
+    void ClearTweensSafe()
+    {
+        foreach (var tw in activeTweens)
+            if (tw.kind == 3 && tw.img != null && tw.img.gameObject != null)
+                UnityEngine.Object.Destroy(tw.img.gameObject);
+        activeTweens.Clear();
+    }
+
+    // Clear only non-VFX tweens (keeps VFX running to completion)
+    void ClearMoveTweens()
+    {
+        for (int i = activeTweens.Count - 1; i >= 0; i--)
+            if (activeTweens[i].kind != 3)  // keep destroyVfx (kind=3)
+                activeTweens.RemoveAt(i);
+    }
 
     // ---- START BATTLE ----
     void StartBattle(int episodeId, int battleId)
@@ -770,8 +788,9 @@ public class Bootstrapper : MonoBehaviour
             BuildBoardGOs();
         }
 
-        // Stop all tweens — model is now authoritative
-        activeTweens.Clear();
+        // Stop all non-VFX tweens — model is now authoritative
+        // VFX (kind=3) are allowed to finish so their GOs get properly Destroyed
+        ClearMoveTweens();
 
         // Sync each slot
         for (int x=0;x<boardW;x++)
@@ -801,8 +820,24 @@ public class Bootstrapper : MonoBehaviour
             gemRT[x,y].anchoredPosition = ModelToViewPos(x, y);
             gemRT[x,y].localScale = Vector3.one;
 
-            // Selection highlight
-            img.color = (selX == x && selY == y) ? new Color(1.3f,1.2f,0.7f,1f) : Color.white;
+            // Selection highlight — tint + scale pulse
+            if (selX == x && selY == y)
+            {
+                img.color = new Color(1.4f, 1.25f, 0.5f, 1f);  // gold tint
+                gemRT[x,y].localScale = new Vector3(1.18f, 1.18f, 1f); // pop up
+                // Add pulse animation if not already running
+                bool alreadyPulsing = false;
+                foreach (var tw in activeTweens)
+                    if (tw.kind == 4 && tw.rt == gemRT[x,y]) { alreadyPulsing = true; break; }
+                if (!alreadyPulsing)
+                    activeTweens.Add(new GemTween{ rt=gemRT[x,y], img=img,
+                        from=new Vector2(1.18f,1.18f), to=new Vector2(1.08f,1.08f),
+                        t=0, dur=0.4f, kind=4 });
+            }
+            else
+            {
+                img.color = Color.white;
+            }
         }
     }
 
@@ -1199,10 +1234,14 @@ public class Bootstrapper : MonoBehaviour
         if (gemRT == null) yield break;
         var posA = ModelToViewPos(ax, ay);
         var posB = ModelToViewPos(bx, by);
-        activeTweens.Clear();
+        // Only clear move/drop tweens — VFX (kind=3) must survive to auto-Destroy their GOs
+        ClearMoveTweens();
+        // Snap to current model positions first, so swap starts from correct place
+        if (gemRT[ax,ay] != null) { gemRT[ax,ay].anchoredPosition = posA; }
+        if (gemRT[bx,by] != null) { gemRT[bx,by].anchoredPosition = posB; }
         if (gemRT[ax,ay] != null) activeTweens.Add(new GemTween{ rt=gemRT[ax,ay], from=posA, to=posB, t=0, dur=SWAP_DUR, kind=0 });
         if (gemRT[bx,by] != null) activeTweens.Add(new GemTween{ rt=gemRT[bx,by], from=posB, to=posA, t=0, dur=SWAP_DUR, kind=0 });
-        yield return StartCoroutine(WaitTweens());
+        yield return StartCoroutine(WaitTweensMove());
     }
 
     IEnumerator AnimateDestroy(List<Vector2Int> cells)
@@ -1228,23 +1267,45 @@ public class Bootstrapper : MonoBehaviour
     IEnumerator AnimateDrop()
     {
         if (gemRT == null) yield break;
-        activeTweens.Clear();
+        // Only clear move tweens — VFX (kind=3) must survive to properly Destroy their GOs
+        ClearMoveTweens();
+        // Spawn new gems above the board so they visibly fall down
         for (int x=0;x<boardW;x++)
         for (int y=0;y<boardH;y++)
         {
             if (gemRT[x,y] == null) continue;
             var target = ModelToViewPos(x, y);
-            if (Vector2.Distance(gemRT[x,y].anchoredPosition, target) > 1f)
-                activeTweens.Add(new GemTween{ rt=gemRT[x,y], from=gemRT[x,y].anchoredPosition,
-                    to=target, t=0, dur=DROP_DUR, kind=2 });
+            var cur    = gemRT[x,y].anchoredPosition;
+            // If gem is already near target, skip (it was there before collapse)
+            if (Vector2.Distance(cur, target) < 1f) continue;
+            // If gem spawned at exactly y=0 local (top edge), push start above board
+            float startY = (cur.y > target.y - 2f)
+                ? -((-1) * cellSz + cellSz * 0.5f + 10f)  // one row above board top
+                : cur.y;
+            var spawnPos = new Vector2(target.x, startY);
+            gemRT[x,y].anchoredPosition = spawnPos;
+            activeTweens.Add(new GemTween{ rt=gemRT[x,y],
+                from=spawnPos, to=target, t=0, dur=DROP_DUR, kind=2 });
         }
-        yield return StartCoroutine(WaitTweens());
+        yield return StartCoroutine(WaitTweensMove());
     }
 
     IEnumerator WaitTweens()
     {
         while (activeTweens.Count > 0)
             yield return null;
+    }
+
+    // Wait only for move/drop/fade tweens (kind 0,1,2,4) — don't block on VFX (kind=3)
+    IEnumerator WaitTweensMove()
+    {
+        bool anyMove;
+        do {
+            anyMove = false;
+            foreach (var tw in activeTweens)
+                if (tw.kind != 3) { anyMove = true; break; }
+            if (anyMove) yield return null;
+        } while (anyMove);
     }
 
     void SpawnDestroyVfx(int x, int y, int color)
@@ -1655,10 +1716,18 @@ public class Bootstrapper : MonoBehaviour
                         if (tw.img != null) tw.img.color = new Color(1,1,1, 1f - a);
                         break;
                     case 3: // destroy VFX overlay — fade + scale, then Destroy GO
-                        if (tw.img != null) { tw.img.color = new Color(1f,1f,1f, 1f - a); if (tw.rt != null) tw.rt.localScale = new Vector3(1f + a*0.5f, 1f + a*0.5f, 1f); }
+                        if (tw.img != null) { tw.img.color = new Color(1f,1f,1f, 1f - a); if (tw.rt != null) tw.rt.localScale = new Vector3(1f + a * 0.6f, 1f + a * 0.6f, 1f); }
                         break;
+                    case 4: // selection pulse — ping-pong scale (loops until removed)
+                    {
+                        float ping = Mathf.Abs(Mathf.Sin(tw.t * Mathf.PI * 2.5f));
+                        float sc = Mathf.Lerp(1.08f, 1.20f, ping);
+                        if (tw.rt != null) tw.rt.localScale = new Vector3(sc, sc, 1f);
+                        if (a >= 1f) tw.t = 0f;  // loop: reset time, don't remove
+                        break;
+                    }
                 }
-                if (a >= 1f)
+                if (a >= 1f && tw.kind != 4) // kind=4 (pulse) loops, never auto-removed
                 {
                     if (tw.kind == 3 && tw.img != null && tw.img.gameObject != null)
                         UnityEngine.Object.Destroy(tw.img.gameObject);
