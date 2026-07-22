@@ -658,6 +658,11 @@ public class Bootstrapper : MonoBehaviour
         pendingEnemyTurn = false;
         selX = selY = -1;
         activeTweens.Clear();
+        // fix: hide VN navigation buttons when entering battle
+        if (nextBtnGO != null) nextBtnGO.SetActive(false);
+        if (skipBtnGO != null) skipBtnGO.SetActive(false);
+        if (choicePanel != null) choicePanel.SetActive(false);
+        if (dialogBox != null) dialogBox.gameObject.SetActive(false);
         PlayBgm(ep.bgmBattle);
         RefreshBattlePanel();
         InitBoard();
@@ -723,6 +728,9 @@ public class Bootstrapper : MonoBehaviour
         rt.anchorMax = new Vector2(0.5f, 0.5f);
         rt.pivot = new Vector2(0.5f, 0.5f);
         rt.anchoredPosition = Vector2.zero;
+
+        // fix: force canvas layout pass so boardPanelRT.rect is non-zero before computing cellSz
+        Canvas.ForceUpdateCanvases();
 
         float maxW = boardPanelRT != null ? Mathf.Max(400f, boardPanelRT.rect.width  - 30f) : 1000f;
         float maxH = boardPanelRT != null ? Mathf.Max(400f, boardPanelRT.rect.height - 30f) : 1100f;
