@@ -615,6 +615,26 @@ public class Bootstrapper : MonoBehaviour
     float[] abilityCdDur   = new float[5];
     BattleConfig curBattle;
 
+    // --- Ability zone highlight ---
+    // Highlighted cells shown when player holds ability button (preview mode)
+    List<Image> abilityHighlightImgs = new List<Image>();
+    int abilityPreviewIdx = -1;   // which ability is being previewed (-1 = none)
+
+    // --- Enemy turn overlay (dim + claw) ---
+    Image enemyTurnDimImg;   // 5% black overlay during enemy turn
+    Image enemyClawImg;      // enemy claw / hand / tentacle sprite
+    float enemyClawT = 0f;   // animation progress
+    bool  enemyClawActive = false;
+    Vector2 enemyClawFrom, enemyClawTo;
+
+    // --- Tutorial state ---
+    bool tutorialBonusDone = false;      // shown "bonus gem" hint once
+    bool tutorialAbilityDone = false;    // shown "ability" hint once
+    GameObject tutorialPanelGO;
+    Text tutorialText;
+    float tutorialTimer = 0f;
+    const float TUTORIAL_DUR = 4.0f;
+
     // --- Tween system (view-only, never drives model) ---
     class GemTween
     {
@@ -658,6 +678,11 @@ public class Bootstrapper : MonoBehaviour
         pendingEnemyTurn = false;
         selX = selY = -1;
         ClearTweensSafe();   // fix: destroy orphan VFX GOs, not just clear list
+        ClearAbilityZone();  // clear any leftover zone highlights
+        StopEnemyTurnVFX();  // ensure dim/claw are hidden on battle start
+        // Reset tutorial flags per episode-1 battles 1-4 only
+        if (currentEpisode == 1 && curBattle != null && curBattle.id == 1)
+        { tutorialBonusDone = false; tutorialAbilityDone = false; }
         // fix: hide VN navigation buttons when entering battle
         if (nextBtnGO != null) nextBtnGO.SetActive(false);
         if (skipBtnGO != null) skipBtnGO.SetActive(false);
@@ -932,8 +957,10 @@ public class Bootstrapper : MonoBehaviour
                 battleTurnText.text = L("TURN_ENEMY");
                 boardPhase = BoardPhase.EnemyTurn;
                 UpdateEnemyIntent();
-                yield return new WaitForSeconds(1.0f);
+                StartEnemyTurnVFX();
+                yield return new WaitForSeconds(0.4f);
                 yield return StartCoroutine(DoEnemyTurn());
+                StopEnemyTurnVFX();
             }
             else
             {
@@ -989,6 +1016,31 @@ public class Bootstrapper : MonoBehaviour
                     bonus = bonusType,
                     curse = false
                 };
+                // Tutorial: first 4 battles — show hint about bonus gems
+                if (!tutorialBonusDone && isPlayer && curBattle != null && curBattle.id <= 4)
+                {
+                    tutorialBonusDone = true;
+                    string hintEn, hintRu;
+                    switch (bonusType)
+                    {
+                        case BONUS_LINE_H:
+                            hintEn = "Match 4 in a row → Line Gem! Tap it to clear a whole row!";
+                            hintRu = "Совпадение 4 подряд → Линейный гем! Нажми, чтобы уничтожить всю строку!"; break;
+                        case BONUS_LINE_V:
+                            hintEn = "Match 4 vertically → Column Gem! Clears an entire column!";
+                            hintRu = "Совпадение 4 по вертикали → Гем колонны! Уничтожает весь столбец!"; break;
+                        case BONUS_HAMMER:
+                            hintEn = "Special match → Hammer! Destroys 6 nearby gems!";
+                            hintRu = "Особое совпадение → Молот! Уничтожает 6 соседних гемов!"; break;
+                        case BONUS_COLOR_BOMB:
+                            hintEn = "Match 5+ → Color Bomb! Removes ALL gems of one color!";
+                            hintRu = "Совпадение 5+ → Цветовая бомба! Убирает ВСЕ гемы одного цвета!"; break;
+                        default:
+                            hintEn = "Bonus gem created! Tap it to trigger a powerful effect!";
+                            hintRu = "Создан бонусный гем! Нажми, чтобы вызвать мощный эффект!"; break;
+                    }
+                    ShowTutorialHint(hintEn, hintRu);
+                }
             }
 
             // Gravity + refill
@@ -1439,8 +1491,10 @@ public class Bootstrapper : MonoBehaviour
 
     IEnumerator EnemyTurnDelayed()
     {
-        yield return new WaitForSeconds(1.0f);
+        StartEnemyTurnVFX();
+        yield return new WaitForSeconds(0.4f);  // brief pause for dim to appear
         yield return StartCoroutine(DoEnemyTurn());
+        StopEnemyTurnVFX();
     }
 
     bool CheckBattleEnd()
@@ -1555,9 +1609,19 @@ public class Bootstrapper : MonoBehaviour
         if (state != State.Battle || boardPhase != BoardPhase.Input || turnSide != 0) return;
         string key = AbilityKeys[idx];
         if (!abilityCount.ContainsKey(key) || abilityCount[key] <= 0) return;
+        ClearAbilityZone();  // hide zone preview when ability fires
         abilityCount[key]--;
         SaveProgress();
         boardPhase = BoardPhase.Resolving;
+        // Tutorial: abilities in first 4 battles
+        if (!tutorialAbilityDone && curBattle != null && curBattle.id <= 4)
+        {
+            tutorialAbilityDone = true;
+            ShowTutorialHint(
+                "Ability activated! Abilities are powerful special moves — use them wisely!",
+                "Умение активировано! Способности — мощные особые приёмы. Используй их с умом!"
+            );
+        }
         StartCoroutine(UseAbilityCoroutine(key));
     }
 
@@ -1638,6 +1702,155 @@ public class Bootstrapper : MonoBehaviour
         if (sprites.ContainsKey(key)) { vfxOverlay.sprite = sprites[key]; vfxOverlay.color = Color.white; }
         vfxAnim = key; vfxT = 0f;
         PlaySfx("sfx_choice");
+    }
+
+    // ---- ABILITY ZONE HIGHLIGHT ----
+    // Shows semi-transparent tinted overlays on the cells that the ability would affect.
+    // Called on ability button PointerDown; cleared on PointerUp or when ability fires.
+    void ShowAbilityZone(int idx)
+    {
+        ClearAbilityZone();
+        abilityPreviewIdx = idx;
+        if (gridRoot == null) return;
+        string key = AbilityKeys[idx];
+        var cells = GetAbilityCells(key);
+        Color tint = new Color(1f, 0.85f, 0.1f, 0.38f); // gold highlight
+        foreach (var pos in cells)
+        {
+            if (pos.x < 0 || pos.x >= boardW || pos.y < 0 || pos.y >= boardH) continue;
+            var go = new GameObject("AbilZone_" + pos.x + "_" + pos.y);
+            go.transform.SetParent(gridRoot.transform, false);
+            var img = go.AddComponent<Image>(); img.color = tint; img.raycastTarget = false;
+            var rt = img.rectTransform;
+            rt.anchorMin = new Vector2(0,1); rt.anchorMax = new Vector2(0,1); rt.pivot = new Vector2(0.5f,0.5f);
+            rt.sizeDelta = new Vector2(cellSz - 4f, cellSz - 4f);
+            rt.anchoredPosition = ModelToViewPos(pos.x, pos.y);
+            abilityHighlightImgs.Add(img);
+        }
+    }
+
+    void ClearAbilityZone()
+    {
+        foreach (var img in abilityHighlightImgs)
+            if (img != null && img.gameObject != null) UnityEngine.Object.Destroy(img.gameObject);
+        abilityHighlightImgs.Clear();
+        abilityPreviewIdx = -1;
+    }
+
+    // Returns the set of board cells that an ability would affect (mirrors ability logic)
+    List<Vector2Int> GetAbilityCells(string key)
+    {
+        var cells = new List<Vector2Int>();
+        switch (key)
+        {
+            case "inferno":
+                int cx = boardW/2, cy = boardH/2;
+                for (int x=Math.Max(0,cx-1);x<=Math.Min(boardW-1,cx+1);x++)
+                for (int y=Math.Max(0,cy-1);y<=Math.Min(boardH-1,cy+1);y++)
+                    cells.Add(new Vector2Int(x,y));
+                break;
+            case "slam":
+                int col = boardW/2;
+                for (int y=0;y<boardH;y++) cells.Add(new Vector2Int(col,y));
+                break;
+            case "cleanse":
+                for (int x=0;x<boardW;x++) for (int y=0;y<boardH;y++)
+                    if (boardModel[x,y].color == 5) cells.Add(new Vector2Int(x,y));
+                break;
+            case "freeze":
+                // freeze affects the enemy, highlight entire board with blue tint
+                for (int x=0;x<boardW;x++) for (int y=0;y<boardH;y++)
+                    cells.Add(new Vector2Int(x,y));
+                break;
+            case "shuffle":
+                // shuffle affects everything
+                for (int x=0;x<boardW;x++) for (int y=0;y<boardH;y++)
+                    cells.Add(new Vector2Int(x,y));
+                break;
+        }
+        return cells;
+    }
+
+    // Colour tint per ability for the zone highlight
+    Color GetAbilityZoneColor(string key)
+    {
+        switch (key)
+        {
+            case "inferno":  return new Color(1f, 0.4f, 0.1f, 0.42f);
+            case "slam":     return new Color(1f, 0.9f, 0.2f, 0.42f);
+            case "cleanse":  return new Color(0.5f, 1f, 0.5f, 0.42f);
+            case "freeze":   return new Color(0.4f, 0.8f, 1f, 0.30f);
+            case "shuffle":  return new Color(0.9f, 0.6f, 1f, 0.28f);
+        }
+        return new Color(1f, 0.85f, 0.1f, 0.38f);
+    }
+
+    // Coloured zone highlight (colour per ability)
+    void ShowAbilityZoneColored(int idx)
+    {
+        ClearAbilityZone();
+        abilityPreviewIdx = idx;
+        if (gridRoot == null) return;
+        string key = AbilityKeys[idx];
+        var cells = GetAbilityCells(key);
+        Color tint = GetAbilityZoneColor(key);
+        foreach (var pos in cells)
+        {
+            if (pos.x < 0 || pos.x >= boardW || pos.y < 0 || pos.y >= boardH) continue;
+            var go = new GameObject("AbilZone_" + pos.x + "_" + pos.y);
+            go.transform.SetParent(gridRoot.transform, false);
+            var img = go.AddComponent<Image>(); img.color = tint; img.raycastTarget = false;
+            var rt = img.rectTransform;
+            rt.anchorMin = new Vector2(0,1); rt.anchorMax = new Vector2(0,1); rt.pivot = new Vector2(0.5f,0.5f);
+            rt.sizeDelta = new Vector2(cellSz - 4f, cellSz - 4f);
+            rt.anchoredPosition = ModelToViewPos(pos.x, pos.y);
+            abilityHighlightImgs.Add(img);
+        }
+    }
+
+    // ---- ENEMY TURN VISUAL (DIM + CLAW) ----
+    void StartEnemyTurnVFX()
+    {
+        if (enemyTurnDimImg == null) return;
+        // 5% dim
+        enemyTurnDimImg.color = new Color(0,0,0,0.05f);
+        // Claw: pick sprite based on enemy type
+        if (enemyClawImg != null)
+        {
+            string clawKey = "portrait_fallen"; // default
+            if (curBattle != null)
+            {
+                if (curBattle.enemyKey.Contains("minotaur"))        clawKey = "enemy_minotaur";
+                else if (curBattle.enemyKey.Contains("shadow"))     clawKey = "enemy_shadow_priestess";
+                else if (curBattle.enemyKey.Contains("hoplite"))    clawKey = "enemy_hoplite_corrupt";
+                else                                                 clawKey = curBattle.enemyKey;
+            }
+            if (sprites.ContainsKey(clawKey)) { enemyClawImg.sprite = sprites[clawKey]; }
+            // Animate: slide from off-screen top-right into the board area
+            var rt = enemyClawImg.rectTransform;
+            enemyClawFrom = new Vector2(160f, -160f);   // off-screen (top-right corner)
+            enemyClawTo   = new Vector2(-80f, -380f);   // overlapping board area
+            rt.anchoredPosition = enemyClawFrom;
+            enemyClawImg.color = new Color(1,1,1,0.9f);
+            enemyClawT = 0f;
+            enemyClawActive = true;
+        }
+    }
+
+    void StopEnemyTurnVFX()
+    {
+        if (enemyTurnDimImg != null) enemyTurnDimImg.color = new Color(0,0,0,0);
+        if (enemyClawImg    != null) enemyClawImg.color    = new Color(1,1,1,0);
+        enemyClawActive = false;
+    }
+
+    // ---- TUTORIAL HINTS ----
+    void ShowTutorialHint(string msgEn, string msgRu)
+    {
+        if (tutorialPanelGO == null) return;
+        tutorialText.text = (lang == Lang.EN) ? msgEn : msgRu;
+        tutorialPanelGO.SetActive(true);
+        tutorialTimer = TUTORIAL_DUR;
     }
 
     void RefreshAbilityButtons()
@@ -1762,6 +1975,22 @@ public class Bootstrapper : MonoBehaviour
                     abilityCdMask[i].fillAmount = 0f;
             }
             RefreshAbilityButtons();
+        }
+
+        // Enemy claw slide animation
+        if (enemyClawActive && enemyClawImg != null)
+        {
+            enemyClawT = Mathf.MoveTowards(enemyClawT, 1f, Time.deltaTime * 2.2f);
+            float ease = enemyClawT * enemyClawT * (3f - 2f * enemyClawT);
+            enemyClawImg.rectTransform.anchoredPosition = Vector2.Lerp(enemyClawFrom, enemyClawTo, ease);
+        }
+
+        // Tutorial hint auto-hide
+        if (tutorialTimer > 0f)
+        {
+            tutorialTimer -= Time.deltaTime;
+            if (tutorialTimer <= 0f && tutorialPanelGO != null)
+                tutorialPanelGO.SetActive(false);
         }
     }
 
@@ -2009,6 +2238,16 @@ public class Bootstrapper : MonoBehaviour
             var cdRT = cdImg.rectTransform; cdRT.anchorMin = Vector2.zero; cdRT.anchorMax = Vector2.one; cdRT.offsetMin = Vector2.zero; cdRT.offsetMax = Vector2.zero;
             abilityCdMask[i] = cdImg;
             var abBtn = ringGo.AddComponent<Button>(); abBtn.onClick.AddListener(() => UseAbility(captured));
+            // Zone highlight: show on press, hide on release
+            var abET = ringGo.AddComponent<UnityEngine.EventSystems.EventTrigger>();
+            var entryDown = new UnityEngine.EventSystems.EventTrigger.Entry();
+            entryDown.eventID = UnityEngine.EventSystems.EventTriggerType.PointerDown;
+            entryDown.callback.AddListener(_ => ShowAbilityZoneColored(captured));
+            abET.triggers.Add(entryDown);
+            var entryUp = new UnityEngine.EventSystems.EventTrigger.Entry();
+            entryUp.eventID = UnityEngine.EventSystems.EventTriggerType.PointerUp;
+            entryUp.callback.AddListener(_ => ClearAbilityZone());
+            abET.triggers.Add(entryUp);
             var abTxt = MakeText(ringGo.transform, "Cost", "", 22, new Color(1f,0.95f,0.85f,1f));
             var atRT = abTxt.rectTransform; atRT.anchorMin = new Vector2(0,0); atRT.anchorMax = new Vector2(1,0); atRT.pivot = new Vector2(0.5f,0);
             atRT.anchoredPosition = new Vector2(0,-22); atRT.sizeDelta = new Vector2(0,40);
@@ -2048,6 +2287,33 @@ public class Bootstrapper : MonoBehaviour
         vfRT.anchorMin = new Vector2(0.5f,0.5f); vfRT.anchorMax = new Vector2(0.5f,0.5f);
         vfRT.pivot = new Vector2(0.5f,0.5f); vfRT.anchoredPosition = new Vector2(0,0); vfRT.sizeDelta = new Vector2(900,900);
         vfxOverlay.preserveAspect = true; vfxOverlay.raycastTarget = false;
+
+        // Enemy turn dim overlay (5% black, covers whole battle panel)
+        enemyTurnDimImg = MakeImage(battlePanel.transform, "EnemyDim", new Color(0,0,0,0));
+        Stretch(enemyTurnDimImg.rectTransform);
+        enemyTurnDimImg.raycastTarget = false;
+
+        // Enemy claw / hand sprite (slides in from top-right during enemy turn)
+        enemyClawImg = MakeImage(battlePanel.transform, "EnemyClaw", new Color(1,1,1,0));
+        var ecRT = enemyClawImg.rectTransform;
+        ecRT.anchorMin = new Vector2(1,1); ecRT.anchorMax = new Vector2(1,1); ecRT.pivot = new Vector2(1,1);
+        ecRT.sizeDelta = new Vector2(320,320); ecRT.anchoredPosition = new Vector2(0,0);
+        enemyClawImg.preserveAspect = true; enemyClawImg.raycastTarget = false;
+
+        // Tutorial hint panel (center of screen, auto-hides)
+        tutorialPanelGO = new GameObject("TutPanel"); tutorialPanelGO.transform.SetParent(canvas.transform, false);
+        var tpRT = tutorialPanelGO.AddComponent<RectTransform>();
+        tpRT.anchorMin = new Vector2(0.5f,0.5f); tpRT.anchorMax = new Vector2(0.5f,0.5f);
+        tpRT.pivot = new Vector2(0.5f,0.5f); tpRT.anchoredPosition = new Vector2(0,320); tpRT.sizeDelta = new Vector2(820,200);
+        var tpBg = tutorialPanelGO.AddComponent<Image>(); tpBg.color = new Color(0.05f,0.04f,0.10f,0.93f);
+        AddOutline(tutorialPanelGO, new Color(0.8f,0.7f,0.3f,0.9f), 3);
+        tutorialText = MakeText(tutorialPanelGO.transform, "TutTxt", "", 34, new Color(1f,0.95f,0.8f,1f));
+        var ttRT = tutorialText.rectTransform;
+        ttRT.anchorMin = Vector2.zero; ttRT.anchorMax = Vector2.one;
+        ttRT.offsetMin = new Vector2(18,10); ttRT.offsetMax = new Vector2(-18,-10);
+        tutorialText.alignment = TextAnchor.MiddleCenter;
+        tutorialPanelGO.SetActive(false);
+
         battlePanel.SetActive(false);
 
         // Battle result panel
@@ -2269,6 +2535,9 @@ public class Bootstrapper : MonoBehaviour
     void OnSkip()
     {
         PlaySfx("sfx_choice");
+        // Always hide immediately — whichever branch we take next will re-show if needed
+        skipBtnGO.SetActive(false);
+        nextBtnGO.SetActive(false);
         var ep = episodes[currentEpisode-1];
         while (idx < ep.script.Count)
         {
