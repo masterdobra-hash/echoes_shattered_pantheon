@@ -657,7 +657,7 @@ public class Bootstrapper : MonoBehaviour
         enemyFreezeTurns = 0; enemyNextSkillIdx = 0;
         pendingEnemyTurn = false;
         selX = selY = -1;
-        activeTweens.Clear();
+        ClearTweensSafe();   // fix: destroy orphan VFX GOs, not just clear list
         // fix: hide VN navigation buttons when entering battle
         if (nextBtnGO != null) nextBtnGO.SetActive(false);
         if (skipBtnGO != null) skipBtnGO.SetActive(false);
@@ -784,6 +784,8 @@ public class Bootstrapper : MonoBehaviour
                         || gemGO.GetLength(1) != boardH;
         if (needRebuild)
         {
+            // fix: destroy VFX GOs before gridRoot rebuild so they don't become orphans
+            ClearTweensSafe();
             if (gemGO != null)
             {
                 for (int x=0;x<gemGO.GetLength(0);x++)
@@ -960,7 +962,7 @@ public class Bootstrapper : MonoBehaviour
             bool hasLongRun = false;
             foreach (var pos in matches)
                 if (CountRunAt(pos.x, pos.y) >= 4) { hasLongRun = true; break; }
-            if (hasLongRun) { dmg = (int)(dmg * 1.5f); extraTurn = true; }
+            if (hasLongRun) { dmg = (int)(dmg * 1.5f); if (isPlayer) extraTurn = true; }
             ApplyDamage(isPlayer, dmg);
 
             // Mortal heal
