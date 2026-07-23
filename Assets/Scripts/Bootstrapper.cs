@@ -2295,22 +2295,22 @@ public class Bootstrapper : MonoBehaviour
 
         // Enemy claw / hand sprite (slides in from top-right during enemy turn)
         enemyClawImg = MakeImage(battlePanel.transform, "EnemyClaw", new Color(1,1,1,0));
-        var ecRT = enemyClawImg.rectTransform;
-        ecRT.anchorMin = new Vector2(1,1); ecRT.anchorMax = new Vector2(1,1); ecRT.pivot = new Vector2(1,1);
-        ecRT.sizeDelta = new Vector2(320,320); ecRT.anchoredPosition = new Vector2(0,0);
+        var clawRT = enemyClawImg.rectTransform;   // renamed: ecRT already used below for echoesText
+        clawRT.anchorMin = new Vector2(1,1); clawRT.anchorMax = new Vector2(1,1); clawRT.pivot = new Vector2(1,1);
+        clawRT.sizeDelta = new Vector2(320,320); clawRT.anchoredPosition = new Vector2(0,0);
         enemyClawImg.preserveAspect = true; enemyClawImg.raycastTarget = false;
 
         // Tutorial hint panel (center of screen, auto-hides)
         tutorialPanelGO = new GameObject("TutPanel"); tutorialPanelGO.transform.SetParent(canvas.transform, false);
-        var tpRT = tutorialPanelGO.AddComponent<RectTransform>();
-        tpRT.anchorMin = new Vector2(0.5f,0.5f); tpRT.anchorMax = new Vector2(0.5f,0.5f);
-        tpRT.pivot = new Vector2(0.5f,0.5f); tpRT.anchoredPosition = new Vector2(0,320); tpRT.sizeDelta = new Vector2(820,200);
+        var tutRT = tutorialPanelGO.AddComponent<RectTransform>();  // renamed: tpRT already used elsewhere
+        tutRT.anchorMin = new Vector2(0.5f,0.5f); tutRT.anchorMax = new Vector2(0.5f,0.5f);
+        tutRT.pivot = new Vector2(0.5f,0.5f); tutRT.anchoredPosition = new Vector2(0,320); tutRT.sizeDelta = new Vector2(820,200);
         var tpBg = tutorialPanelGO.AddComponent<Image>(); tpBg.color = new Color(0.05f,0.04f,0.10f,0.93f);
         AddOutline(tutorialPanelGO, new Color(0.8f,0.7f,0.3f,0.9f), 3);
         tutorialText = MakeText(tutorialPanelGO.transform, "TutTxt", "", 34, new Color(1f,0.95f,0.8f,1f));
-        var ttRT = tutorialText.rectTransform;
-        ttRT.anchorMin = Vector2.zero; ttRT.anchorMax = Vector2.one;
-        ttRT.offsetMin = new Vector2(18,10); ttRT.offsetMax = new Vector2(-18,-10);
+        var tutTxtRT = tutorialText.rectTransform;  // renamed: ttRT may conflict
+        tutTxtRT.anchorMin = Vector2.zero; tutTxtRT.anchorMax = Vector2.one;
+        tutTxtRT.offsetMin = new Vector2(18,10); tutTxtRT.offsetMax = new Vector2(-18,-10);
         tutorialText.alignment = TextAnchor.MiddleCenter;
         tutorialPanelGO.SetActive(false);
 
