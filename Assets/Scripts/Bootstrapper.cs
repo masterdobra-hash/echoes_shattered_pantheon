@@ -836,6 +836,7 @@ public class Bootstrapper : MonoBehaviour
             var cell = boardModel[x,y];
 
             // Sprite
+            bool isBonusGem = cell.bonus != BONUS_NONE;
             string key;
             if      (cell.bonus == BONUS_LINE_H || cell.bonus == BONUS_LINE_V) key = "bonus_hermes_step";
             else if (cell.bonus == BONUS_HAMMER)    key = "bonus_hephaestus_hammer";
@@ -868,6 +869,28 @@ public class Bootstrapper : MonoBehaviour
                     activeTweens.Add(new GemTween{ rt=gemRT[x,y], img=img,
                         from=new Vector2(1.18f,1.18f), to=new Vector2(1.08f,1.08f),
                         t=0, dur=0.4f, kind=4 });
+            }
+            else if (isBonusGem)
+            {
+                // Fix: bonus gems get a bright glowing tint and slightly larger scale
+                // so players can clearly distinguish them from normal gems.
+                switch (cell.bonus)
+                {
+                    case BONUS_LINE_H:
+                    case BONUS_LINE_V:
+                        img.color = new Color(0.6f, 1.0f, 1.8f, 1f); // bright cyan
+                        break;
+                    case BONUS_HAMMER:
+                        img.color = new Color(1.8f, 1.2f, 0.3f, 1f); // bright orange
+                        break;
+                    case BONUS_COLOR_BOMB:
+                        img.color = new Color(1.6f, 0.4f, 2.0f, 1f); // bright purple
+                        break;
+                    default:
+                        img.color = new Color(1.5f, 1.5f, 1.5f, 1f);
+                        break;
+                }
+                gemRT[x,y].localScale = new Vector3(1.12f, 1.12f, 1f); // slightly bigger
             }
             else
             {
@@ -1581,7 +1604,8 @@ public class Bootstrapper : MonoBehaviour
     }
     void ExecuteEnemySkill(string sk)
     {
-        if (vfxOverlay != null) { vfxAnim = sk; vfxT = 0f; vfxOverlay.color = new Color(1,1,1,1); }
+        // Fix: do NOT flash vfxOverlay white for enemy skills — it caused a full-screen white flash.
+        // VFX is reserved for player abilities (TriggerVFX). Enemy turn is visualised by claw/dim overlay.
         var rng = new System.Random();
         switch (sk)
         {
@@ -2184,11 +2208,20 @@ public class Bootstrapper : MonoBehaviour
         for (int i=0;i<3;i++)
         {
             var esGo = new GameObject("EnSkill"+i); esGo.transform.SetParent(enemyPanel.transform, false);
-            var esImg = esGo.AddComponent<Image>(); esImg.color = new Color(0.15f,0.07f,0.12f,0.95f);
+            // Fix D: enemy skill slots styled distinctly — dark red/purple bg with vivid red border
+            var esImg = esGo.AddComponent<Image>(); esImg.color = new Color(0.22f,0.05f,0.05f,0.97f);
             var esRT = esImg.rectTransform;
             esRT.anchorMin = new Vector2(0,1); esRT.anchorMax = new Vector2(0,1); esRT.pivot = new Vector2(0,1);
             esRT.anchoredPosition = new Vector2(270 + i*180, -150); esRT.sizeDelta = new Vector2(160, 160);
-            AddOutline(esGo, new Color(0.85f,0.35f,0.35f,1f), 3);
+            AddOutline(esGo, new Color(1f,0.15f,0.15f,1f), 5);
+            // skull / enemy indicator badge in top-left corner
+            var badgeGo = new GameObject("EnSkBadge"+i); badgeGo.transform.SetParent(esGo.transform, false);
+            var badgeImg = badgeGo.AddComponent<Image>(); badgeImg.color = new Color(0.9f,0.15f,0.15f,1f); badgeImg.raycastTarget = false;
+            var badgeRT = badgeImg.rectTransform;
+            badgeRT.anchorMin = new Vector2(0,1); badgeRT.anchorMax = new Vector2(0,1); badgeRT.pivot = new Vector2(0,1);
+            badgeRT.anchoredPosition = new Vector2(0,0); badgeRT.sizeDelta = new Vector2(28,28);
+            var badgeTxt = MakeText(badgeGo.transform, "EnSkBadgeTxt"+i, "!", 22, Color.white);
+            Stretch(badgeTxt.rectTransform); badgeTxt.alignment = TextAnchor.MiddleCenter; badgeTxt.fontStyle = FontStyle.Bold;
             enemySkillIcons[i] = esImg;
             var cdT = MakeText(esGo.transform, "EnSkCd"+i, "", 30, new Color(1f,0.95f,0.85f,1f));
             var cdRT = cdT.rectTransform;
@@ -2237,8 +2270,8 @@ public class Bootstrapper : MonoBehaviour
             cdImg.type = Image.Type.Filled; cdImg.fillAmount = 0f;
             var cdRT = cdImg.rectTransform; cdRT.anchorMin = Vector2.zero; cdRT.anchorMax = Vector2.one; cdRT.offsetMin = Vector2.zero; cdRT.offsetMax = Vector2.zero;
             abilityCdMask[i] = cdImg;
-            var abBtn = ringGo.AddComponent<Button>(); abBtn.onClick.AddListener(() => UseAbility(captured));
-            // Zone highlight: show on press, hide on release
+            // Fix: Button + EventTrigger on the same GO breaks Button.onClick in Unity.
+            // Solution: use ONLY EventTrigger with PointerDown/Up/Click.
             var abET = ringGo.AddComponent<UnityEngine.EventSystems.EventTrigger>();
             var entryDown = new UnityEngine.EventSystems.EventTrigger.Entry();
             entryDown.eventID = UnityEngine.EventSystems.EventTriggerType.PointerDown;
@@ -2248,6 +2281,11 @@ public class Bootstrapper : MonoBehaviour
             entryUp.eventID = UnityEngine.EventSystems.EventTriggerType.PointerUp;
             entryUp.callback.AddListener(_ => ClearAbilityZone());
             abET.triggers.Add(entryUp);
+            // PointerClick replaces Button.onClick (no EventTrigger conflict)
+            var entryClick = new UnityEngine.EventSystems.EventTrigger.Entry();
+            entryClick.eventID = UnityEngine.EventSystems.EventTriggerType.PointerClick;
+            entryClick.callback.AddListener(_ => UseAbility(captured));
+            abET.triggers.Add(entryClick);
             var abTxt = MakeText(ringGo.transform, "Cost", "", 22, new Color(1f,0.95f,0.85f,1f));
             var atRT = abTxt.rectTransform; atRT.anchorMin = new Vector2(0,0); atRT.anchorMax = new Vector2(1,0); atRT.pivot = new Vector2(0.5f,0);
             atRT.anchoredPosition = new Vector2(0,-22); atRT.sizeDelta = new Vector2(0,40);
