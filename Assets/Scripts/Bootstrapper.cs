@@ -904,10 +904,29 @@ public class Bootstrapper : MonoBehaviour
     {
         if (state != State.Battle || boardPhase != BoardPhase.Input || turnSide != 0) return;
 
+        // BONUS GEM: tap directly activates it (no need to swap)
+        if (boardModel[x, y].bonus != BONUS_NONE)
+        {
+            selX = selY = -1;
+            boardPhase = BoardPhase.Resolving;
+            StartCoroutine(DoActivateBonusTap(x, y));
+            return;
+        }
+
         if (selX < 0)
         {
             selX = x; selY = y;
             FullSyncView();
+            return;
+        }
+
+        // If selected cell was a bonus gem and we tap elsewhere — treat as bonus activation
+        if (boardModel[selX, selY].bonus != BONUS_NONE)
+        {
+            int bx2 = selX, by2 = selY;
+            selX = selY = -1;
+            boardPhase = BoardPhase.Resolving;
+            StartCoroutine(DoActivateBonusTap(bx2, by2));
             return;
         }
 
@@ -925,11 +944,67 @@ public class Bootstrapper : MonoBehaviour
         StartCoroutine(DoPlayerSwap(sx, sy, x, y));
     }
 
+    // Player explicitly taps a bonus gem to fire it
+    IEnumerator DoActivateBonusTap(int x, int y)
+    {
+        battleTurnText.text = "";
+        PlaySfx("sfx_choice");
+        yield return StartCoroutine(ActivateBonus(x, y));
+        if (CheckBattleEnd()) yield break;
+        // Chain: after bonus explodes, resolve any new matches
+        yield return StartCoroutine(ResolveAllMatches(true));
+        if (CheckBattleEnd()) yield break;
+        // Advance turn same as normal swap
+        if (extraTurn)
+        {
+            extraTurn = false;
+            battleTurnText.text = L("EXTRA_TURN");
+            boardPhase = BoardPhase.Input;
+        }
+        else
+        {
+            turnCount++;
+            if (turnCount >= 2)
+            {
+                turnCount = 0; turnSide = 1;
+                battleTurnText.text = L("TURN_ENEMY");
+                boardPhase = BoardPhase.EnemyTurn;
+                UpdateEnemyIntent();
+                StartEnemyTurnVFX();
+                yield return new WaitForSeconds(0.4f);
+                yield return StartCoroutine(DoEnemyTurn());
+                StopEnemyTurnVFX();
+            }
+            else
+            {
+                battleTurnText.text = L("TURN_PLAYER");
+                UpdateEnemyIntent();
+                boardPhase = BoardPhase.Input;
+            }
+        }
+    }
+
     public void OnGemSwipe(int x, int y, int dx, int dy)
     {
         if (state != State.Battle || boardPhase != BoardPhase.Input || turnSide != 0) return;
+        // Swipe on a bonus gem activates it (swipe = intent to use)
+        if (boardModel[x, y].bonus != BONUS_NONE)
+        {
+            selX = selY = -1;
+            boardPhase = BoardPhase.Resolving;
+            StartCoroutine(DoActivateBonusTap(x, y));
+            return;
+        }
         int tx = x + dx, ty = y + dy;
         if (tx < 0 || tx >= boardW || ty < 0 || ty >= boardH) return;
+        // Swipe onto a bonus gem — activate the bonus gem instead of swapping
+        if (boardModel[tx, ty].bonus != BONUS_NONE)
+        {
+            selX = selY = -1;
+            boardPhase = BoardPhase.Resolving;
+            StartCoroutine(DoActivateBonusTap(tx, ty));
+            return;
+        }
         selX = selY = -1;
         StartCoroutine(DoPlayerSwap(x, y, tx, ty));
     }
@@ -1003,9 +1078,29 @@ public class Bootstrapper : MonoBehaviour
             var matches = CollectMatches();
             if (matches == null || matches.Count == 0) break;
 
-            // Determine bonus info
+            // Determine bonus info for NEW bonus gem creation from this match
             int bonusAnchorX = -1, bonusAnchorY = -1, bonusType = BONUS_NONE, bonusColor = -1;
             DetectBonus(matches, out bonusAnchorX, out bonusAnchorY, out bonusType, out bonusColor);
+
+            // Check if any existing bonus gems are ADJACENT to the matched cells (chain trigger)
+            // A bonus gem adjacent to a match gets chain-activated after normal gems clear
+            var adjacentBonuses = new List<Vector2Int>();
+            foreach (var pos in matches)
+            {
+                int[] ddx = { 1,-1, 0, 0 };
+                int[] ddy = { 0, 0, 1,-1 };
+                for (int d=0;d<4;d++)
+                {
+                    int nx = pos.x+ddx[d], ny = pos.y+ddy[d];
+                    if (nx<0||nx>=boardW||ny<0||ny>=boardH) continue;
+                    if (boardModel[nx,ny].bonus != BONUS_NONE)
+                    {
+                        var bpos = new Vector2Int(nx,ny);
+                        if (!adjacentBonuses.Contains(bpos) && !matches.Contains(bpos))
+                            adjacentBonuses.Add(bpos);
+                    }
+                }
+            }
 
             // Damage
             int dmg = matches.Count * 2 * comboMul;
@@ -1077,22 +1172,46 @@ public class Bootstrapper : MonoBehaviour
             comboMul++;
 
             if (enemyHpCur <= 0 || playerHpCur <= 0) break;
+
+            // CHAIN: if any bonus gems were adjacent to the destroyed match, activate them now.
+            // We activate one at a time; each ActivateBonus call collapses+refills, then we loop.
+            if (adjacentBonuses.Count > 0)
+            {
+                foreach (var bpos in adjacentBonuses)
+                {
+                    // Make sure it still exists (wasn't destroyed by a previous chain)
+                    if (bpos.x < boardW && bpos.y < boardH && boardModel[bpos.x, bpos.y].bonus != BONUS_NONE)
+                    {
+                        yield return StartCoroutine(ActivateBonus(bpos.x, bpos.y));
+                        if (enemyHpCur <= 0 || playerHpCur <= 0) break;
+                    }
+                }
+                if (enemyHpCur <= 0 || playerHpCur <= 0) break;
+                // Continue cascade loop — new matches may have been created by chain explosions
+            }
         }
     }
 
     // ---- MATCH DETECTION ----
-    // Returns set of (x,y) positions that are part of a match-3+
+    // Returns set of (x,y) positions that are part of a match-3+.
+    // CRITICAL: bonus gems (bonus != BONUS_NONE) are EXCLUDED from normal match runs —
+    // they act as wild-blockers and can only be activated by explicit tap or chain explosion.
+    // However if a bonus gem IS part of a match (surrounded by same-color), we collect it
+    // for chain-activation after the normal gems are destroyed.
     List<Vector2Int> CollectMatches()
     {
         var inMatch = new bool[boardW, boardH];
-        // Horizontal runs
+        // Horizontal runs — skip cells with bonus gems (they break the run)
         for (int y=0;y<boardH;y++)
         {
             int runStart = 0;
             for (int x=1;x<=boardW;x++)
             {
-                bool cont = x < boardW && !boardModel[x,y].IsEmpty && !boardModel[x-1,y].IsEmpty
-                         && boardModel[x,y].color == boardModel[x-1,y].color;
+                bool cont = x < boardW
+                         && !boardModel[x,y].IsEmpty   && !boardModel[x-1,y].IsEmpty
+                         && boardModel[x,y].bonus   == BONUS_NONE   // bonus gems break runs
+                         && boardModel[x-1,y].bonus == BONUS_NONE
+                         && boardModel[x,y].color   == boardModel[x-1,y].color;
                 if (!cont)
                 {
                     int run = x - runStart;
@@ -1101,14 +1220,17 @@ public class Bootstrapper : MonoBehaviour
                 }
             }
         }
-        // Vertical runs
+        // Vertical runs — same bonus exclusion
         for (int x=0;x<boardW;x++)
         {
             int runStart = 0;
             for (int y=1;y<=boardH;y++)
             {
-                bool cont = y < boardH && !boardModel[x,y].IsEmpty && !boardModel[x,y-1].IsEmpty
-                         && boardModel[x,y].color == boardModel[x,y-1].color;
+                bool cont = y < boardH
+                         && !boardModel[x,y].IsEmpty   && !boardModel[x,y-1].IsEmpty
+                         && boardModel[x,y].bonus   == BONUS_NONE
+                         && boardModel[x,y-1].bonus == BONUS_NONE
+                         && boardModel[x,y].color   == boardModel[x,y-1].color;
                 if (!cont)
                 {
                     int run = y - runStart;
@@ -1262,50 +1384,76 @@ public class Bootstrapper : MonoBehaviour
     }
 
     // ---- BONUS ACTIVATION ----
+    // Called when player taps a bonus gem OR when a bonus gem is caught in a chain explosion.
+    // Collects affected cells, deals damage, animates, clears model, then collapses+refills.
+    // Does NOT start a new cascade — caller (DoActivateBonusTap / ResolveAllMatches) handles that.
     IEnumerator ActivateBonus(int x, int y)
     {
         var cell = boardModel[x,y];
+        if (cell.bonus == BONUS_NONE) yield break;
+
         var toDestroy = new List<Vector2Int>();
 
         switch (cell.bonus)
         {
             case BONUS_LINE_H:
+                // Destroy entire row
                 for (int cx=0;cx<boardW;cx++) toDestroy.Add(new Vector2Int(cx, y));
+                TriggerVFX("bonus_hermes_step");
                 break;
             case BONUS_LINE_V:
+                // Destroy entire column
                 for (int cy=0;cy<boardH;cy++) toDestroy.Add(new Vector2Int(x, cy));
+                TriggerVFX("bonus_hermes_step");
                 break;
             case BONUS_HAMMER:
+                // Destroy 7x7 area (radius 3) centred on gem
                 for (int cx=Math.Max(0,x-3);cx<=Math.Min(boardW-1,x+3);cx++)
                 for (int cy=Math.Max(0,y-3);cy<=Math.Min(boardH-1,y+3);cy++)
                     toDestroy.Add(new Vector2Int(cx,cy));
+                TriggerVFX("bonus_hephaestus_hammer");
                 break;
             case BONUS_COLOR_BOMB:
-                int targetColor = -1;
-                // Find most common color
+                // Destroy ALL gems of the most-common colour on the board
                 var counts = new int[boardColors];
                 for (int cx=0;cx<boardW;cx++) for (int cy=0;cy<boardH;cy++)
-                    if (!boardModel[cx,cy].IsEmpty && boardModel[cx,cy].color < boardColors)
+                    if (!boardModel[cx,cy].IsEmpty && boardModel[cx,cy].color >= 0 && boardModel[cx,cy].color < boardColors)
                         counts[boardModel[cx,cy].color]++;
-                for (int c=0;c<boardColors;c++) if (counts[c]>counts[Math.Max(0,targetColor)]) targetColor = c;
+                int targetColor = 0;
+                for (int c=1;c<boardColors;c++) if (counts[c] > counts[targetColor]) targetColor = c;
                 for (int cx=0;cx<boardW;cx++) for (int cy=0;cy<boardH;cy++)
                     if (!boardModel[cx,cy].IsEmpty && boardModel[cx,cy].color == targetColor)
                         toDestroy.Add(new Vector2Int(cx,cy));
+                // Also include the bomb itself if not already in list
+                if (!toDestroy.Exists(p => p.x==x && p.y==y)) toDestroy.Add(new Vector2Int(x,y));
+                TriggerVFX("bonus_zeus_lightning");
                 break;
         }
 
+        // The bonus gem itself is always consumed
+        if (!toDestroy.Exists(p => p.x==x && p.y==y)) toDestroy.Add(new Vector2Int(x,y));
+
         if (toDestroy.Count > 0)
         {
+            // Damage scales with cells destroyed, bonus multiplier x3
             int dmg = toDestroy.Count * 3;
             ApplyDamage(true, dmg);
             UpdateBattleHUD();
             yield return StartCoroutine(AnimateDestroy(toDestroy));
+            // Collect any bonus gems that were inside the blast area for chaining
+            var chainBonuses = new List<Vector2Int>();
+            foreach (var pos in toDestroy)
+                if (boardModel[pos.x,pos.y].bonus != BONUS_NONE && !(pos.x==x && pos.y==y))
+                    chainBonuses.Add(pos);
+            // Clear model
             foreach (var pos in toDestroy) boardModel[pos.x, pos.y] = CellData.Empty;
-            boardModel[x, y] = CellData.Empty;
             CollapseBoard();
             RefillBoard();
             yield return StartCoroutine(AnimateDrop());
             FullSyncView();
+            // Chain-activate any bonuses caught in the blast (after collapse so positions are stable)
+            // Note: after collapse positions shift — skip chaining for simplicity (avoid infinite loops)
+            // We already cleared their model cells above, so they won't re-activate.
         }
     }
 
