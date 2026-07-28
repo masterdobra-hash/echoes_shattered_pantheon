@@ -1802,22 +1802,41 @@ public class Bootstrapper : MonoBehaviour
         switch (key)
         {
             case "inferno":  yield return StartCoroutine(AbilityInferno()); break;
-            case "freeze":   AbilityFreeze(); break;
+            case "freeze":   yield return StartCoroutine(AbilityFreeze()); break;
             case "shuffle":  yield return StartCoroutine(AbilityShuffle()); break;
             case "cleanse":  yield return StartCoroutine(AbilityCleanse()); break;
             case "slam":     yield return StartCoroutine(AbilitySlam()); break;
         }
         RefreshAbilityButtons();
-        boardPhase = BoardPhase.Input;
+        if (CheckBattleEnd()) yield break;
+        // Abilities COST a turn — advance turn counter same as a normal swap
+        turnCount++;
+        if (turnCount >= 2)
+        {
+            turnCount = 0; turnSide = 1;
+            battleTurnText.text = L("TURN_ENEMY");
+            boardPhase = BoardPhase.EnemyTurn;
+            UpdateEnemyIntent();
+            StartEnemyTurnVFX();
+            yield return new WaitForSeconds(0.4f);
+            yield return StartCoroutine(DoEnemyTurn());
+            StopEnemyTurnVFX();
+        }
+        else
+        {
+            battleTurnText.text = L("TURN_PLAYER");
+            UpdateEnemyIntent();
+            boardPhase = BoardPhase.Input;
+        }
     }
 
+    // ---- INFERNO STRIKE: уничтожает 3×3 в центре поля ----
     IEnumerator AbilityInferno()
     {
-        int cx = boardW/2, cy = boardH/2;
-        var cells = new List<Vector2Int>();
-        for (int x=Math.Max(0,cx-1);x<=Math.Min(boardW-1,cx+1);x++)
-        for (int y=Math.Max(0,cy-1);y<=Math.Min(boardH-1,cy+1);y++)
-            cells.Add(new Vector2Int(x,y));
+        // Используем те же ячейки, что показывает GetAbilityCells — единый источник правды
+        var cells = GetAbilityCells("inferno");
+        if (cells.Count == 0) yield break;
+        TriggerVFX("vfx_inferno_burst");
         ApplyDamage(true, cells.Count * 15);
         UpdateBattleHUD();
         yield return StartCoroutine(AnimateDestroy(cells));
@@ -1825,40 +1844,76 @@ public class Bootstrapper : MonoBehaviour
         CollapseBoard(); RefillBoard();
         yield return StartCoroutine(AnimateDrop());
         FullSyncView();
-        TriggerVFX("vfx_inferno_burst");
-    }
-
-    void AbilityFreeze() { enemyFreezeTurns += 2; TriggerVFX("vfx_freeze"); }
-
-    IEnumerator AbilityShuffle()
-    {
-        var rng = new System.Random();
-        for (int x=0;x<boardW;x++) for (int y=0;y<boardH;y++)
-            boardModel[x,y] = new CellData{ color=rng.Next(0,boardColors), bonus=BONUS_NONE, curse=false };
-        FullSyncView();
+        // Каскад после взрыва
         yield return StartCoroutine(ResolveAllMatches(true));
     }
 
+    // ---- TIME STASIS: замораживает врага на 2 хода ----
+    IEnumerator AbilityFreeze()
+    {
+        enemyFreezeTurns += 2;
+        TriggerVFX("vfx_freeze");
+        // Показываем визуальный фидбек — вся зона синеет на секунду
+        yield return new WaitForSeconds(0.5f);
+        // Freeze не меняет поле → не тратит доп. время
+    }
+
+    // ---- AEGIS SHUFFLE: перемешивает всё поле + резолвит матчи ----
+    IEnumerator AbilityShuffle()
+    {
+        var rng = new System.Random();
+        // Сохраняем бонусные гемы — они не перемешиваются
+        var savedBonuses = new List<(int x, int y, CellData cell)>();
+        for (int x=0;x<boardW;x++) for (int y=0;y<boardH;y++)
+            if (boardModel[x,y].bonus != BONUS_NONE) savedBonuses.Add((x, y, boardModel[x,y]));
+        // Перезаполняем только обычные гемы
+        for (int x=0;x<boardW;x++) for (int y=0;y<boardH;y++)
+            if (boardModel[x,y].bonus == BONUS_NONE)
+                boardModel[x,y] = new CellData{ color=rng.Next(0,boardColors), bonus=BONUS_NONE, curse=false };
+        // Восстанавливаем бонусные гемы на прежних местах
+        foreach (var b in savedBonuses) boardModel[b.x, b.y] = b.cell;
+        FullSyncView();
+        yield return new WaitForSeconds(0.15f); // небольшая пауза перед каскадом
+        yield return StartCoroutine(ResolveAllMatches(true));
+    }
+
+    // ---- PACT CLEANSE: уничтожает все проклятые гемы ----
     IEnumerator AbilityCleanse()
     {
         var cells = new List<Vector2Int>();
         for (int x=0;x<boardW;x++) for (int y=0;y<boardH;y++)
-            if (boardModel[x,y].color == 5) cells.Add(new Vector2Int(x,y));
-        if (cells.Count > 0)
+            if (boardModel[x,y].curse) cells.Add(new Vector2Int(x,y));
+        if (cells.Count == 0)
         {
+            // Нет проклятых гемов — лечим игрока вместо этого (consolation prize)
+            int heal = 25;
+            playerHpCur = Math.Min(playerHpMax, playerHpCur + heal);
+            UpdateBattleHUD();
+            TriggerVFX("vfx_freeze"); // используем freeze VFX как "holy light"
+            yield return new WaitForSeconds(0.4f);
+        }
+        else
+        {
+            TriggerVFX("vfx_freeze");
+            ApplyDamage(true, cells.Count * 8); // проклятые гемы при очищении бьют врага
+            UpdateBattleHUD();
             yield return StartCoroutine(AnimateDestroy(cells));
             foreach (var p in cells) boardModel[p.x,p.y] = CellData.Empty;
             CollapseBoard(); RefillBoard();
             yield return StartCoroutine(AnimateDrop());
+            FullSyncView();
+            // Каскад после очищения
+            yield return StartCoroutine(ResolveAllMatches(true));
         }
-        FullSyncView();
     }
 
+    // ---- TITAN SLAM: уничтожает центральную колонку ----
     IEnumerator AbilitySlam()
     {
-        int col = boardW/2;
-        var cells = new List<Vector2Int>();
-        for (int y=0;y<boardH;y++) cells.Add(new Vector2Int(col,y));
+        // Используем те же ячейки, что показывает GetAbilityCells
+        var cells = GetAbilityCells("slam");
+        if (cells.Count == 0) yield break;
+        TriggerVFX("vfx_titan_slam");
         ApplyDamage(true, cells.Count * 25);
         UpdateBattleHUD();
         yield return StartCoroutine(AnimateDestroy(cells));
@@ -1866,7 +1921,8 @@ public class Bootstrapper : MonoBehaviour
         CollapseBoard(); RefillBoard();
         yield return StartCoroutine(AnimateDrop());
         FullSyncView();
-        TriggerVFX("vfx_titan_slam");
+        // Каскад после удара
+        yield return StartCoroutine(ResolveAllMatches(true));
     }
 
     void TriggerVFX(string key)
@@ -1926,8 +1982,13 @@ public class Bootstrapper : MonoBehaviour
                 for (int y=0;y<boardH;y++) cells.Add(new Vector2Int(col,y));
                 break;
             case "cleanse":
+                // Highlight cursed gems (use curse flag, not color==5)
                 for (int x=0;x<boardW;x++) for (int y=0;y<boardH;y++)
-                    if (boardModel[x,y].color == 5) cells.Add(new Vector2Int(x,y));
+                    if (boardModel[x,y].curse) cells.Add(new Vector2Int(x,y));
+                // If no cursed gems, highlight full board (will heal instead)
+                if (cells.Count == 0)
+                    for (int x=0;x<boardW;x++) for (int y=0;y<boardH;y++)
+                        cells.Add(new Vector2Int(x,y));
                 break;
             case "freeze":
                 // freeze affects the enemy, highlight entire board with blue tint
