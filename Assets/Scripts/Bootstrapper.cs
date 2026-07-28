@@ -619,6 +619,7 @@ public class Bootstrapper : MonoBehaviour
     // Highlighted cells shown when player holds ability button (preview mode)
     List<Image> abilityHighlightImgs = new List<Image>();
     int abilityPreviewIdx = -1;   // which ability is being previewed (-1 = none)
+    bool abilitySelected   = false; // true = first tap done, waiting for confirm-tap
 
     // --- Enemy turn overlay (dim + claw) ---
     Image enemyTurnDimImg;   // 5% black overlay during enemy turn
@@ -678,7 +679,8 @@ public class Bootstrapper : MonoBehaviour
         pendingEnemyTurn = false;
         selX = selY = -1;
         ClearTweensSafe();   // fix: destroy orphan VFX GOs, not just clear list
-        ClearAbilityZone();  // clear any leftover zone highlights
+        ClearAbilityZone();  // clear any leftover zone highlights (also resets abilitySelected)
+        abilitySelected = false;
         StopEnemyTurnVFX();  // ensure dim/claw are hidden on battle start
         // Reset tutorial flags per episode-1 battles 1-4 only
         if (currentEpisode == 1 && curBattle != null && curBattle.id == 1)
@@ -904,12 +906,41 @@ public class Bootstrapper : MonoBehaviour
     {
         if (state != State.Battle || boardPhase != BoardPhase.Input || turnSide != 0) return;
 
-        // BONUS GEM: tap directly activates it (no need to swap)
+        // If an ability is selected, tapping the board cancels the selection
+        if (abilitySelected)
+        {
+            ClearAbilityZone();
+            selX = selY = -1;
+            FullSyncView();
+            return;
+        }
+
+        // BONUS GEM two-tap: first tap selects + shows zone, second fires
         if (boardModel[x, y].bonus != BONUS_NONE)
         {
-            selX = selY = -1;
-            boardPhase = BoardPhase.Resolving;
-            StartCoroutine(DoActivateBonusTap(x, y));
+            if (selX == x && selY == y)
+            {
+                // Second tap on the same bonus gem → activate
+                selX = selY = -1;
+                boardPhase = BoardPhase.Resolving;
+                StartCoroutine(DoActivateBonusTap(x, y));
+            }
+            else
+            {
+                // First tap → select gem and show effect zone
+                selX = x; selY = y;
+                ShowBonusGemZone(x, y);
+                FullSyncView();
+            }
+            return;
+        }
+
+        // If a bonus gem was previously selected, cancel that selection
+        if (selX >= 0 && selY >= 0 && boardModel[selX, selY].bonus != BONUS_NONE)
+        {
+            ClearAbilityZone();
+            selX = x; selY = y;
+            FullSyncView();
             return;
         }
 
@@ -920,20 +951,10 @@ public class Bootstrapper : MonoBehaviour
             return;
         }
 
-        // If selected cell was a bonus gem and we tap elsewhere — treat as bonus activation
-        if (boardModel[selX, selY].bonus != BONUS_NONE)
-        {
-            int bx2 = selX, by2 = selY;
-            selX = selY = -1;
-            boardPhase = BoardPhase.Resolving;
-            StartCoroutine(DoActivateBonusTap(bx2, by2));
-            return;
-        }
-
         int dx = Math.Abs(x - selX), dy = Math.Abs(y - selY);
         if (dx + dy != 1)
         {
-            // Reselect
+            // Reselect normal gem
             selX = x; selY = y;
             FullSyncView();
             return;
@@ -987,9 +1008,12 @@ public class Bootstrapper : MonoBehaviour
     public void OnGemSwipe(int x, int y, int dx, int dy)
     {
         if (state != State.Battle || boardPhase != BoardPhase.Input || turnSide != 0) return;
-        // Swipe on a bonus gem activates it (swipe = intent to use)
+        // If ability is selected, swipe on board cancels the selection
+        if (abilitySelected) { ClearAbilityZone(); selX = selY = -1; }
+        // Swipe from a bonus gem → activate immediately (swipe = strong intent)
         if (boardModel[x, y].bonus != BONUS_NONE)
         {
+            ClearAbilityZone();
             selX = selY = -1;
             boardPhase = BoardPhase.Resolving;
             StartCoroutine(DoActivateBonusTap(x, y));
@@ -997,9 +1021,10 @@ public class Bootstrapper : MonoBehaviour
         }
         int tx = x + dx, ty = y + dy;
         if (tx < 0 || tx >= boardW || ty < 0 || ty >= boardH) return;
-        // Swipe onto a bonus gem — activate the bonus gem instead of swapping
+        // Swipe onto a bonus gem → activate that bonus gem
         if (boardModel[tx, ty].bonus != BONUS_NONE)
         {
+            ClearAbilityZone();
             selX = selY = -1;
             boardPhase = BoardPhase.Resolving;
             StartCoroutine(DoActivateBonusTap(tx, ty));
@@ -1776,12 +1801,46 @@ public class Bootstrapper : MonoBehaviour
     string[] AbilityKeys   = { "inferno","freeze","shuffle","cleanse","slam" };
     int[]    AbilityPrices = { 100, 150, 80, 120, 200 };
 
+    // Called on every tap of an ability ring button.
+    // First tap → select (show zone). Second tap on same → fire. Tap another → switch.
+    void OnAbilityRingClick(int idx)
+    {
+        if (state != State.Battle || boardPhase != BoardPhase.Input || turnSide != 0) return;
+        if (abilitySelected && abilityPreviewIdx == idx)
+        {
+            // Second tap on the same ability → fire it
+            UseAbility(idx);
+        }
+        else
+        {
+            // First tap (or switching to a different ability) → show zone
+            SelectAbility(idx);
+        }
+    }
+
+    // Select an ability: show the zone highlight + pulse the ring button
+    void SelectAbility(int idx)
+    {
+        if (state != State.Battle || boardPhase != BoardPhase.Input || turnSide != 0) return;
+        // If no charges, don't select
+        string key = AbilityKeys[idx];
+        if (!abilityCount.ContainsKey(key) || abilityCount[key] <= 0)
+        {
+            ClearAbilityZone();
+            return;
+        }
+        ShowAbilityZoneColored(idx);
+        abilitySelected = true;
+        RefreshAbilityRingVisuals();
+    }
+
     void UseAbility(int idx)
     {
         if (state != State.Battle || boardPhase != BoardPhase.Input || turnSide != 0) return;
         string key = AbilityKeys[idx];
         if (!abilityCount.ContainsKey(key) || abilityCount[key] <= 0) return;
         ClearAbilityZone();  // hide zone preview when ability fires
+        abilitySelected = false;
         abilityCount[key]--;
         SaveProgress();
         boardPhase = BoardPhase.Resolving;
@@ -1790,11 +1849,30 @@ public class Bootstrapper : MonoBehaviour
         {
             tutorialAbilityDone = true;
             ShowTutorialHint(
-                "Ability activated! Abilities are powerful special moves — use them wisely!",
-                "Умение активировано! Способности — мощные особые приёмы. Используй их с умом!"
+                "Tap again to activate! Zone shows the area of effect.",
+                "Нажми ещё раз для активации! Зона показывает область действия."
             );
         }
         StartCoroutine(UseAbilityCoroutine(key));
+    }
+
+    // Dim all rings; brighten + outline the selected one
+    void RefreshAbilityRingVisuals()
+    {
+        Color[] ringTints = { new Color(1f,0.45f,0.15f,1f), new Color(0.5f,0.85f,1f,1f), new Color(1f,0.9f,0.3f,1f), new Color(0.9f,0.8f,0.4f,1f), new Color(0.6f,0.85f,1f,1f) };
+        for (int i = 0; i < abilityRingBg.Length; i++)
+        {
+            if (abilityRingBg[i] == null) continue;
+            bool isSelected = abilitySelected && (abilityPreviewIdx == i);
+            // Dim unselected rings; full-bright selected ring
+            Color baseColor = ringTints[i];
+            abilityRingBg[i].color = isSelected
+                ? new Color(baseColor.r * 1.4f, baseColor.g * 1.4f, baseColor.b * 1.4f, 1f)
+                : new Color(baseColor.r * 0.55f, baseColor.g * 0.55f, baseColor.b * 0.55f, 0.85f);
+            // Scale: selected ring is bigger
+            var rt = abilityRingBg[i].rectTransform;
+            rt.localScale = isSelected ? new Vector3(1.18f, 1.18f, 1f) : Vector3.one;
+        }
     }
 
     IEnumerator UseAbilityCoroutine(string key)
@@ -1963,6 +2041,8 @@ public class Bootstrapper : MonoBehaviour
             if (img != null && img.gameObject != null) UnityEngine.Object.Destroy(img.gameObject);
         abilityHighlightImgs.Clear();
         abilityPreviewIdx = -1;
+        abilitySelected   = false;
+        RefreshAbilityRingVisuals(); // restore all rings to normal state
     }
 
     // Returns the set of board cells that an ability would affect (mirrors ability logic)
@@ -2016,6 +2096,58 @@ public class Bootstrapper : MonoBehaviour
             case "shuffle":  return new Color(0.9f, 0.6f, 1f, 0.28f);
         }
         return new Color(1f, 0.85f, 0.1f, 0.38f);
+    }
+
+    // Show the effect zone of a bonus gem (called on first tap of the gem)
+    void ShowBonusGemZone(int gx, int gy)
+    {
+        ClearAbilityZone();
+        if (gridRoot == null) return;
+        var cell = boardModel[gx, gy];
+        var cells = new List<Vector2Int>();
+        Color tint;
+        switch (cell.bonus)
+        {
+            case BONUS_LINE_H:
+                for (int cx = 0; cx < boardW; cx++) cells.Add(new Vector2Int(cx, gy));
+                tint = new Color(0.3f, 0.9f, 1f, 0.45f);  // cyan
+                break;
+            case BONUS_LINE_V:
+                for (int cy = 0; cy < boardH; cy++) cells.Add(new Vector2Int(gx, cy));
+                tint = new Color(0.3f, 0.9f, 1f, 0.45f);
+                break;
+            case BONUS_HAMMER:
+                for (int cx = Math.Max(0,gx-3); cx <= Math.Min(boardW-1,gx+3); cx++)
+                for (int cy = Math.Max(0,gy-3); cy <= Math.Min(boardH-1,gy+3); cy++)
+                    cells.Add(new Vector2Int(cx, cy));
+                tint = new Color(1f, 0.6f, 0.1f, 0.45f);  // orange
+                break;
+            case BONUS_COLOR_BOMB:
+                // Highlight all gems of same colour
+                int targetCol = cell.color;
+                for (int cx = 0; cx < boardW; cx++)
+                for (int cy = 0; cy < boardH; cy++)
+                    if (!boardModel[cx,cy].IsEmpty && boardModel[cx,cy].color == targetCol)
+                        cells.Add(new Vector2Int(cx, cy));
+                tint = new Color(0.9f, 0.3f, 1f, 0.45f);  // purple
+                break;
+            default:
+                cells.Add(new Vector2Int(gx, gy));
+                tint = new Color(1f, 1f, 0.3f, 0.45f);
+                break;
+        }
+        foreach (var pos in cells)
+        {
+            if (pos.x < 0 || pos.x >= boardW || pos.y < 0 || pos.y >= boardH) continue;
+            var go = new GameObject("BonusZone_" + pos.x + "_" + pos.y);
+            go.transform.SetParent(gridRoot.transform, false);
+            var img = go.AddComponent<Image>(); img.color = tint; img.raycastTarget = false;
+            var rt = img.rectTransform;
+            rt.anchorMin = new Vector2(0,1); rt.anchorMax = new Vector2(0,1); rt.pivot = new Vector2(0.5f,0.5f);
+            rt.sizeDelta = new Vector2(cellSz - 4f, cellSz - 4f);
+            rt.anchoredPosition = ModelToViewPos(pos.x, pos.y);
+            abilityHighlightImgs.Add(img);
+        }
     }
 
     // Coloured zone highlight (colour per ability)
@@ -2088,11 +2220,21 @@ public class Bootstrapper : MonoBehaviour
 
     void RefreshAbilityButtons()
     {
+        Color[] ringTints = { new Color(1f,0.45f,0.15f,1f), new Color(0.5f,0.85f,1f,1f), new Color(1f,0.9f,0.3f,1f), new Color(0.9f,0.8f,0.4f,1f), new Color(0.6f,0.85f,1f,1f) };
         for (int i=0;i<abilityButtonsText.Count;i++)
         {
             int cnt = abilityCount.ContainsKey(AbilityKeys[i]) ? abilityCount[AbilityKeys[i]] : 0;
             string name = L("ABIL_" + AbilityKeys[i].ToUpper());
             abilityButtonsText[i].text = name + "\nx" + cnt;
+            // Grey out ring if no charges (unless this ring is currently selected)
+            if (abilityRingBg[i] != null && !(abilitySelected && abilityPreviewIdx == i))
+            {
+                Color baseColor = ringTints[i];
+                abilityRingBg[i].color = (cnt > 0)
+                    ? baseColor
+                    : new Color(0.25f, 0.25f, 0.25f, 0.7f);
+                abilityRingBg[i].rectTransform.localScale = Vector3.one;
+            }
         }
     }
 
@@ -2479,21 +2621,15 @@ public class Bootstrapper : MonoBehaviour
             cdImg.type = Image.Type.Filled; cdImg.fillAmount = 0f;
             var cdRT = cdImg.rectTransform; cdRT.anchorMin = Vector2.zero; cdRT.anchorMax = Vector2.one; cdRT.offsetMin = Vector2.zero; cdRT.offsetMax = Vector2.zero;
             abilityCdMask[i] = cdImg;
-            // Fix: Button + EventTrigger on the same GO breaks Button.onClick in Unity.
-            // Solution: use ONLY EventTrigger with PointerDown/Up/Click.
+            // Two-tap UX model (no Button component — EventTrigger only):
+            //   Tap 1 → SelectAbility(i)  : show zone highlight, ring pulses
+            //   Tap 2 → UseAbility(i)     : fire the ability (same ring)
+            //   Tap different ring → switch selection
+            //   Tap board / elsewhere → cancel (ClearAbilityZone via OnGemTap)
             var abET = ringGo.AddComponent<UnityEngine.EventSystems.EventTrigger>();
-            var entryDown = new UnityEngine.EventSystems.EventTrigger.Entry();
-            entryDown.eventID = UnityEngine.EventSystems.EventTriggerType.PointerDown;
-            entryDown.callback.AddListener(_ => ShowAbilityZoneColored(captured));
-            abET.triggers.Add(entryDown);
-            var entryUp = new UnityEngine.EventSystems.EventTrigger.Entry();
-            entryUp.eventID = UnityEngine.EventSystems.EventTriggerType.PointerUp;
-            entryUp.callback.AddListener(_ => ClearAbilityZone());
-            abET.triggers.Add(entryUp);
-            // PointerClick replaces Button.onClick (no EventTrigger conflict)
             var entryClick = new UnityEngine.EventSystems.EventTrigger.Entry();
             entryClick.eventID = UnityEngine.EventSystems.EventTriggerType.PointerClick;
-            entryClick.callback.AddListener(_ => UseAbility(captured));
+            entryClick.callback.AddListener(_ => OnAbilityRingClick(captured));
             abET.triggers.Add(entryClick);
             var abTxt = MakeText(ringGo.transform, "Cost", "", 22, new Color(1f,0.95f,0.85f,1f));
             var atRT = abTxt.rectTransform; atRT.anchorMin = new Vector2(0,0); atRT.anchorMax = new Vector2(1,0); atRT.pivot = new Vector2(0.5f,0);
