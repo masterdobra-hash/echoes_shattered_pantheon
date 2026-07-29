@@ -785,12 +785,22 @@ public class Bootstrapper : MonoBehaviour
             grt.sizeDelta = new Vector2(cellSz - 6f, cellSz - 6f);
             grt.anchoredPosition = ModelToViewPos(x, y);
 
-            var btn = go.AddComponent<Button>();
-            btn.transition = Selectable.Transition.None;
-            btn.onClick.AddListener(() => OnGemTap(cx, cy));
-
+            // fix: NO Button component — EventTrigger only.
+            // Button (Selectable) on the same GO as IBeginDragHandler causes Unity
+            // EventSystem to eat PointerDown so OnBeginDrag never fires → swipe broken.
+            // Also, Button.onClick misfires on bonus-gem second-tap due to event ordering.
+            // Solution: pure EventTrigger for tap + GemDragHandler for swipe.
+            // GemDragHandler must also implement IDragHandler (OnDrag stub) so that
+            // Unity treats the GO as draggable from PointerDown — required for OnBeginDrag.
             var dh = go.AddComponent<GemDragHandler>();
             dh.Init(this, cx, cy);
+
+            var gemET = go.AddComponent<UnityEngine.EventSystems.EventTrigger>();
+            var gemClick = new UnityEngine.EventSystems.EventTrigger.Entry();
+            gemClick.eventID = UnityEngine.EventSystems.EventTriggerType.PointerClick;
+            // Guard: ignore click if GemDragHandler just finished a swipe gesture
+            gemClick.callback.AddListener((_) => { if (!dh.WasDragging) OnGemTap(cx, cy); });
+            gemET.triggers.Add(gemClick);
 
             gemGO[x, y]  = go;
             gemImg[x, y] = img;
@@ -3083,19 +3093,47 @@ public class Bootstrapper : MonoBehaviour
 }
 
 // ============ GemDragHandler (attached per gem cell) ============
-public class GemDragHandler : MonoBehaviour, IBeginDragHandler, IEndDragHandler
+// IMPORTANT: implements IDragHandler (OnDrag stub) so Unity EventSystem
+// recognises this GO as a "draggable" from the very first PointerDown.
+// Without IDragHandler the EventSystem does NOT call OnBeginDrag, which
+// makes swipe detection impossible when the GO also has an EventTrigger.
+public class GemDragHandler : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler
 {
     Bootstrapper board;
     int cellX, cellY;
     Vector2 dragStart;
+    // WasDragging: set true on BeginDrag, reset on next PointerDown (via Init re-call is
+    // not needed — it resets each frame cycle).  EventTrigger.PointerClick reads this to
+    // avoid firing a tap after a completed swipe gesture.
+    public bool WasDragging { get; private set; }
     const float SWIPE_THRESHOLD = 30f;
 
-    public void Init(Bootstrapper b, int x, int y) { board = b; cellX = x; cellY = y; }
+    public void Init(Bootstrapper b, int x, int y)
+    {
+        board  = b;
+        cellX  = x;
+        cellY  = y;
+        WasDragging = false;
+    }
 
-    public void OnBeginDrag(PointerEventData ev) { dragStart = ev.position; }
+    public void OnBeginDrag(PointerEventData ev)
+    {
+        dragStart   = ev.position;
+        WasDragging = true;
+    }
+
+    // Required: EventSystem only routes drag events to GameObjects that implement
+    // IDragHandler.  Without this stub, OnBeginDrag is never called, so swipe
+    // detection is impossible even when IBeginDragHandler is present.
+    public void OnDrag(PointerEventData ev) { }
 
     public void OnEndDrag(PointerEventData ev)
     {
+        // WasDragging stays true so PointerClick (fired right after EndDrag by
+        // EventTrigger) can detect and skip the spurious tap.
+        // Reset it one frame later so subsequent normal taps work correctly.
+        StartCoroutine(ResetDragFlag());
+
         Vector2 delta = ev.position - dragStart;
         if (delta.magnitude < SWIPE_THRESHOLD) return;
         int dx = 0, dy = 0;
@@ -3104,5 +3142,11 @@ public class GemDragHandler : MonoBehaviour, IBeginDragHandler, IEndDragHandler
         else
             dy = delta.y > 0 ? -1 : 1;   // UI Y is inverted (up=positive screen but -y in grid)
         board.OnGemSwipe(cellX, cellY, dx, dy);
+    }
+
+    System.Collections.IEnumerator ResetDragFlag()
+    {
+        yield return null;   // wait one frame after PointerClick fires
+        WasDragging = false;
     }
 }
