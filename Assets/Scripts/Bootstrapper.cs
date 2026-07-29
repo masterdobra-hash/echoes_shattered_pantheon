@@ -925,27 +925,21 @@ public class Bootstrapper : MonoBehaviour
             return;
         }
 
-        // BONUS GEM two-tap: first tap selects + shows zone, second fires
+        // BONUS GEM: single tap activates immediately.
+        // Two-tap was removed — it caused EventTrigger bubble-firing where the
+        // second "tap" arrived in the same touch cycle, making bonuses fire
+        // on what felt like the first tap without any zone preview visible.
+        // Single-tap is also the UX players expect (see user videos).
         if (boardModel[x, y].bonus != BONUS_NONE)
         {
-            if (selX == x && selY == y)
-            {
-                // Second tap on the same bonus gem → activate
-                selX = selY = -1;
-                boardPhase = BoardPhase.Resolving;
-                StartCoroutine(DoActivateBonusTap(x, y));
-            }
-            else
-            {
-                // First tap → select gem and show effect zone
-                selX = x; selY = y;
-                ShowBonusGemZone(x, y);
-                FullSyncView();
-            }
+            ClearAbilityZone();
+            selX = selY = -1;
+            boardPhase = BoardPhase.Resolving;
+            StartCoroutine(DoActivateBonusTap(x, y));
             return;
         }
 
-        // If a bonus gem was previously selected, cancel that selection
+        // If a bonus gem was previously selected (legacy path — kept for safety), cancel it
         if (selX >= 0 && selY >= 0 && boardModel[selX, selY].bonus != BONUS_NONE)
         {
             ClearAbilityZone();
@@ -981,6 +975,11 @@ public class Bootstrapper : MonoBehaviour
         battleTurnText.text = "";
         PlaySfx("sfx_choice");
         yield return StartCoroutine(ActivateBonus(x, y));
+        // ActivateBonus clears model cells only — we own collapse+refill here
+        CollapseBoard();
+        RefillBoard();
+        yield return StartCoroutine(AnimateDrop());
+        FullSyncView();
         if (CheckBattleEnd()) yield break;
         // Chain: after bonus explodes, resolve any new matches
         yield return StartCoroutine(ResolveAllMatches(true));
@@ -1209,7 +1208,8 @@ public class Bootstrapper : MonoBehaviour
             if (enemyHpCur <= 0 || playerHpCur <= 0) break;
 
             // CHAIN: if any bonus gems were adjacent to the destroyed match, activate them now.
-            // We activate one at a time; each ActivateBonus call collapses+refills, then we loop.
+            // ActivateBonus only clears model cells; we do ONE collapse+refill after ALL
+            // chained bonuses have fired so positions stay consistent throughout the chain.
             if (adjacentBonuses.Count > 0)
             {
                 foreach (var bpos in adjacentBonuses)
@@ -1221,6 +1221,11 @@ public class Bootstrapper : MonoBehaviour
                         if (enemyHpCur <= 0 || playerHpCur <= 0) break;
                     }
                 }
+                // One collapse+refill after all chain explosions have cleared their cells
+                CollapseBoard();
+                RefillBoard();
+                yield return StartCoroutine(AnimateDrop());
+                FullSyncView();
                 if (enemyHpCur <= 0 || playerHpCur <= 0) break;
                 // Continue cascade loop — new matches may have been created by chain explosions
             }
@@ -1475,20 +1480,13 @@ public class Bootstrapper : MonoBehaviour
             ApplyDamage(true, dmg);
             UpdateBattleHUD();
             yield return StartCoroutine(AnimateDestroy(toDestroy));
-            // Collect any bonus gems that were inside the blast area for chaining
-            var chainBonuses = new List<Vector2Int>();
-            foreach (var pos in toDestroy)
-                if (boardModel[pos.x,pos.y].bonus != BONUS_NONE && !(pos.x==x && pos.y==y))
-                    chainBonuses.Add(pos);
-            // Clear model
+            // Clear model ONLY — NO CollapseBoard/RefillBoard/AnimateDrop here.
+            // The caller (DoActivateBonusTap or ResolveAllMatches) owns the
+            // collapse+refill cycle.  Doing it inside ActivateBonus caused
+            // board corruption during chain explosions: each chain call shifted
+            // gem positions before the next ActivateBonus(bpos) ran, resulting
+            // in wrong cells being targeted and ultimately an empty board.
             foreach (var pos in toDestroy) boardModel[pos.x, pos.y] = CellData.Empty;
-            CollapseBoard();
-            RefillBoard();
-            yield return StartCoroutine(AnimateDrop());
-            FullSyncView();
-            // Chain-activate any bonuses caught in the blast (after collapse so positions are stable)
-            // Note: after collapse positions shift — skip chaining for simplicity (avoid infinite loops)
-            // We already cleared their model cells above, so they won't re-activate.
         }
     }
 
