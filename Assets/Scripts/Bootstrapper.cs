@@ -1012,6 +1012,12 @@ public class Bootstrapper : MonoBehaviour
                 boardPhase = BoardPhase.Input;
             }
         }
+        // Safety net: ensure boardPhase is never left stuck in Resolving
+        if (boardPhase == BoardPhase.Resolving)
+        {
+            boardPhase = BoardPhase.Input;
+            battleTurnText.text = L("TURN_PLAYER");
+        }
     }
 
     public void OnGemSwipe(int x, int y, int dx, int dy)
@@ -1048,6 +1054,7 @@ public class Bootstrapper : MonoBehaviour
     {
         boardPhase = BoardPhase.Resolving;
         battleTurnText.text = "";
+        bool finishedCleanly = false;
 
         // Animate swap
         yield return StartCoroutine(AnimateSwap(ax, ay, bx, by));
@@ -1071,7 +1078,7 @@ public class Bootstrapper : MonoBehaviour
         PlaySfx("sfx_choice");
         yield return StartCoroutine(ResolveAllMatches(true));
 
-        if (CheckBattleEnd()) yield break;
+        if (CheckBattleEnd()) { finishedCleanly = true; yield break; }
 
         // Advance turn
         if (extraTurn)
@@ -1100,6 +1107,14 @@ public class Bootstrapper : MonoBehaviour
                 UpdateEnemyIntent();
                 boardPhase = BoardPhase.Input;
             }
+        }
+        finishedCleanly = true;
+        // Safety net: if coroutine exits without setting boardPhase to Input/EnemyTurn/Done,
+        // it means an unexpected path was taken — recover to Input to prevent deadlock.
+        if (!finishedCleanly && boardPhase == BoardPhase.Resolving)
+        {
+            boardPhase = BoardPhase.Input;
+            battleTurnText.text = L("TURN_PLAYER");
         }
     }
 
@@ -1634,8 +1649,19 @@ public class Bootstrapper : MonoBehaviour
         if (bestX < 0)
         {
             bestX = rng.Next(0, boardW);
+            // FIX: was boardH-1, so bottom row was never picked as random fallback.
+            // Use boardH-1 as max for bestY because bestDir=1 means we swap (x,y)<->(x,y+1),
+            // so y+1 must stay within bounds.
             bestY = rng.Next(0, boardH - 1);
-            bestDir = 1;
+            // Also randomly try a horizontal swap as fallback to cover more of the board
+            if (rng.Next(0, 2) == 0 && bestX < boardW - 1)
+            {
+                bestDir = 0; // horizontal
+            }
+            else
+            {
+                bestDir = 1; // vertical (original)
+            }
         }
 
         int tx = bestX + (bestDir == 0 ? 1 : 0);
@@ -1792,11 +1818,11 @@ public class Bootstrapper : MonoBehaviour
         {
             case "pierce": ApplyDamage(false, 15); break;
             case "curse":
-                for (int n=0;n<2;n++) { int cx=rng.Next(0,boardW), cy=rng.Next(0,boardH); if (!boardModel[cx,cy].IsEmpty) boardModel[cx,cy] = new CellData{color=5,bonus=0,curse=true}; }
+                for (int n=0;n<2;n++) { int cx=rng.Next(0,boardW), cy=rng.Next(0,boardH); if (!boardModel[cx,cy].IsEmpty && boardModel[cx,cy].bonus == BONUS_NONE) boardModel[cx,cy] = new CellData{color=5,bonus=0,curse=true}; }
                 ApplyDamage(false, 8); FullSyncView(); break;
             case "pact_blast": ApplyDamage(false, 25); break;
             case "curse_storm":
-                for (int n=0;n<4;n++) { int cx=rng.Next(0,boardW), cy=rng.Next(0,boardH); if (!boardModel[cx,cy].IsEmpty) boardModel[cx,cy] = new CellData{color=5,bonus=0,curse=true}; }
+                for (int n=0;n<4;n++) { int cx=rng.Next(0,boardW), cy=rng.Next(0,boardH); if (!boardModel[cx,cy].IsEmpty && boardModel[cx,cy].bonus == BONUS_NONE) boardModel[cx,cy] = new CellData{color=5,bonus=0,curse=true}; }
                 ApplyDamage(false, 10); FullSyncView(); break;
             case "titan_wrath":
                 ApplyDamage(false, playerHpCur < playerHpMax/2 ? 40 : 22); break;
@@ -1914,6 +1940,12 @@ public class Bootstrapper : MonoBehaviour
             UpdateEnemyIntent();
             boardPhase = BoardPhase.Input;
         }
+        // Safety net: ensure boardPhase is never left stuck in Resolving after ability
+        if (boardPhase == BoardPhase.Resolving)
+        {
+            boardPhase = BoardPhase.Input;
+            battleTurnText.text = L("TURN_PLAYER");
+        }
     }
 
     // ---- INFERNO STRIKE: уничтожает 3×3 в центре поля ----
@@ -1975,12 +2007,14 @@ public class Bootstrapper : MonoBehaviour
             int heal = 25;
             playerHpCur = Math.Min(playerHpMax, playerHpCur + heal);
             UpdateBattleHUD();
-            TriggerVFX("vfx_freeze"); // используем freeze VFX как "holy light"
+            // FIX: use dedicated cleanse VFX (green/holy) instead of freeze (blue ice)
+            TriggerVFX(sprites.ContainsKey("vfx_cleanse") ? "vfx_cleanse" : "vfx_inferno_burst");
             yield return new WaitForSeconds(0.4f);
         }
         else
         {
-            TriggerVFX("vfx_freeze");
+            // FIX: use dedicated cleanse VFX so player can distinguish Cleanse from Freeze
+            TriggerVFX(sprites.ContainsKey("vfx_cleanse") ? "vfx_cleanse" : "vfx_inferno_burst");
             ApplyDamage(true, cells.Count * 8); // проклятые гемы при очищении бьют врага
             UpdateBattleHUD();
             yield return StartCoroutine(AnimateDestroy(cells));
@@ -2106,7 +2140,10 @@ public class Bootstrapper : MonoBehaviour
         return new Color(1f, 0.85f, 0.1f, 0.38f);
     }
 
-    // Show the effect zone of a bonus gem (called on first tap of the gem)
+    // DEAD CODE: ShowBonusGemZone was used for the old two-tap bonus gem flow.
+    // Single-tap activation was introduced in commit 607b349 — this method is
+    // no longer called anywhere.  Kept for reference; safe to delete in next cleanup.
+    [System.Obsolete("Dead code — bonus gems now activate on single tap (commit 607b349)")]
     void ShowBonusGemZone(int gx, int gy)
     {
         ClearAbilityZone();
@@ -2285,14 +2322,18 @@ public class Bootstrapper : MonoBehaviour
             if (typeIdx >= fullText.Length)
             {
                 typing = false; skipBtnGO.SetActive(false);
-                var line = episodes[currentEpisode-1].script[idx];
-                if (line.choices != null) ShowChoiceUI(); else nextBtnGO.SetActive(true);
+                var ep2 = episodes[currentEpisode-1];
+                if (idx >= 0 && idx < ep2.script.Count)
+                {
+                    var line = ep2.script[idx];
+                    if (line.choices != null) ShowChoiceUI(); else nextBtnGO.SetActive(true);
+                }
             }
         }
 
         // Next-button pulse
-        if (nextBtnGO.activeSelf)
-        { pulseT += Time.deltaTime * 3f; float p = 0.85f + 0.15f * Mathf.Sin(pulseT); nextBtnText.color = new Color(1f,0.95f,0.85f,p); }
+        if (nextBtnGO != null && nextBtnGO.activeSelf)
+        { pulseT += Time.deltaTime * 3f; float p = 0.85f + 0.15f * Mathf.Sin(pulseT); if (nextBtnText != null) nextBtnText.color = new Color(1f,0.95f,0.85f,p); }
 
         // VFX overlay fade
         if (!string.IsNullOrEmpty(vfxAnim))
@@ -2345,6 +2386,7 @@ public class Bootstrapper : MonoBehaviour
         // Ability cooldown UI
         if (state == State.Battle)
         {
+            bool anyCdActive = false;
             for (int i=0;i<abilityCdT.Length;i++)
             {
                 if (abilityCdT[i] > 0f)
@@ -2353,11 +2395,16 @@ public class Bootstrapper : MonoBehaviour
                     if (abilityCdT[i] < 0f) abilityCdT[i] = 0f;
                     if (abilityCdMask[i] != null && abilityCdDur[i] > 0f)
                         abilityCdMask[i].fillAmount = abilityCdT[i] / abilityCdDur[i];
+                    anyCdActive = true;
                 }
                 else if (abilityCdMask[i] != null)
                     abilityCdMask[i].fillAmount = 0f;
             }
-            RefreshAbilityButtons();
+            // FIX: RefreshAbilityButtons was called every frame — only refresh when cooldowns
+            // are actively ticking (per-frame fill update needed) or once per state change.
+            // Event-driven calls (UseAbility, OnShopBuy, StartBattle) handle the rest.
+            if (anyCdActive)
+                RefreshAbilityButtons();
         }
 
         // Enemy claw slide animation
@@ -2850,9 +2897,10 @@ public class Bootstrapper : MonoBehaviour
         if (nextBtnText != null) nextBtnText.text = L("NEXT");
         if (state == State.Playing || state == State.Choice)
         {
-            if (idx < episodes[currentEpisode-1].script.Count)
+            var epRef = episodes[currentEpisode-1];
+            if (idx >= 0 && idx < epRef.script.Count)
             {
-                var line = episodes[currentEpisode-1].script[idx];
+                var line = epRef.script[idx];
                 speakerText.text = SpeakerLabel(line.speaker);
                 fullText = (lang == Lang.EN) ? line.en : line.ru;
                 dialogText.text = typing ? (typeIdx >= fullText.Length ? fullText : fullText.Substring(0, Math.Min(typeIdx, fullText.Length))) : fullText;
@@ -2920,8 +2968,12 @@ public class Bootstrapper : MonoBehaviour
     {
         typeIdx = fullText.Length; dialogText.text = fullText; typing = false; typeTimer = 0f;
         skipBtnGO.SetActive(false);
-        var line = episodes[currentEpisode-1].script[idx];
-        if (line.choices != null) ShowChoiceUI(); else nextBtnGO.SetActive(true);
+        var ep3 = episodes[currentEpisode-1];
+        if (idx >= 0 && idx < ep3.script.Count)
+        {
+            var line = ep3.script[idx];
+            if (line.choices != null) ShowChoiceUI(); else nextBtnGO.SetActive(true);
+        }
     }
     void OnSkip()
     {
@@ -2941,9 +2993,11 @@ public class Bootstrapper : MonoBehaviour
     }
     void OnNext()
     {
-        PlaySfx("sfx_blip"); typing = false;
-        var line = episodes[currentEpisode-1].script[idx];
+        PlaySfx("sfx_blip");
+        // FIX: original code set typing=false then immediately checked `if (typing)` — dead branch.
+        // Correct flow: if still typing, skip to end; if done, advance to next line.
         if (typing) { SkipTypewriter(); return; }
+        typing = false;
         idx++;
         SaveProgress();
         if (idx >= episodes[currentEpisode-1].script.Count) ShowEpisodeEnding();
@@ -3087,6 +3141,13 @@ public class Bootstrapper : MonoBehaviour
         foreach (var k in abKeys) abilityCount[k] = PlayerPrefs.GetInt("ab_"+k, 0);
         if (currentEpisode < 1 || currentEpisode > 7) currentEpisode = 1;
         if (idx < 0) idx = 0;
+        // FIX: clamp idx to valid range for current episode to prevent out-of-range crashes
+        // on corrupt saves or version mismatches between old/new script lengths.
+        if (episodes != null && currentEpisode >= 1 && currentEpisode <= episodes.Count)
+        {
+            int maxIdx = episodes[currentEpisode-1].script.Count;
+            if (idx >= maxIdx) idx = Math.Max(0, maxIdx - 1);
+        }
     }
 }
 
